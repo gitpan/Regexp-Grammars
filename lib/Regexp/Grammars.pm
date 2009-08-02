@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = 1.001_004;
+our $VERSION = 1.001_005;
 
 # Load the module...
 sub import {
@@ -611,12 +611,14 @@ my $PROLOGUE = q{((?{; @! = () if !pos;
 #    (grabs final result and stores it in %/. Also defines default <ws> rule)...
 my $EPILOGUE = q{
     )(?{; $Regexp::Grammars::RESULT_STACK[-1]{""} //= $^N;
-         my $match_frame = pop @Regexp::Grammars::RESULT_STACK;
-         delete @{$match_frame}{grep {substr($_,0,1) eq '_'} keys %{$match_frame} };
+         local $Regexp::Grammars::match_frame = pop @Regexp::Grammars::RESULT_STACK;
+         delete @{$Regexp::Grammars::match_frame}{
+                    grep {substr($_,0,1) eq '_'} keys %{$Regexp::Grammars::match_frame}
+                };
          if (@Regexp::Grammars::RESULT_STACK) {
-            $Regexp::Grammars::RESULT_STACK[-1]{'(?R)'} = $match_frame;
+            $Regexp::Grammars::RESULT_STACK[-1]{'(?R)'} = $Regexp::Grammars::match_frame;
          }
-         */ = $match_frame;
+         */ = $Regexp::Grammars::match_frame;
     })(?(DEFINE)
         (?<ws>(?:\\s*))
         (?<hk>(?:\\S+))
@@ -768,7 +770,8 @@ sub _translate_subpattern {
     # Determine save behaviour...
     my $is_noncapturing   = $savemode eq 'noncapturing';
     my $is_listifying     = $savemode eq 'list';
-    my $is_codeblock      = substr($subpattern,0,3) eq '(?{';
+    my $is_codeblock      = substr($subpattern,0,3) eq '(?{'
+                         || substr($subpattern,0,4) eq '(??{';
     my $value_saved       = $is_codeblock  ? '$^R'                    : '$^N';
     my $do_something_with = $is_codeblock  ? 'execute the code block' : 'match the pattern';
     my $result            = $is_codeblock  ? 'result'                 : 'matched substring';
@@ -1067,11 +1070,11 @@ sub _translate_subrule_calls {
 
     (?(DEFINE)
         (?<PARENS>    \(     (?: \\. | (?&PARENS) | (?&CHARSET) | [^][()\\<>]++ )*+  \)   )
-        (?<BRACES>    \{     (?: \\. | (?&BRACES) |               [^{}\\]++   )*+  \}   )
-        (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES) |               [^{}\\]++   )*+  \}\) )
-        (?<HASH>      \% (?&IDENT) (?: :: (?&IDENT) )*                                  )
-        (?<CHARSET>   \[         \^?+ \]?+ [^]]*+                                  \]   ) 
-        (?<IDENT>     [^\W\d]\w*+                                                       )
+        (?<BRACES>    \{     (?: \\. | (?&BRACES) |               [^{}\\]++   )*+    \}   )
+        (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES) |               [^{}\\]++   )*+    \}\) )
+        (?<HASH>      \% (?&IDENT) (?: :: (?&IDENT) )*                                    )
+        (?<CHARSET>   \[              \^?+ \]?+ [^]]*+                               \]   ) 
+        (?<IDENT>     [^\W\d]\w*+                                                         )
     )
     }{ 
         my $curr_construct = $+{construct};
@@ -1285,14 +1288,6 @@ sub _build_grammar {
     my ($grammar_spec) = @_;
     $grammar_spec .= q{};
 
-    # Ensure /x is on at top level...
-#    if ($grammar_spec =~ m{ \A \(\?([xmsi]*)-([xmsi]*): }xms) {
-#        my ($on, $off) = ($1, $2);
-#        $on .= 'x';
-#        $off =~ s{x}{}xmsg;
-#        $grammar_spec =~ s{ \A \(\?[xmsi]*-[xmsi]*: }{(?$on-$off:}xms;
-#    }
-
     # Check for dubious repeated <SUBRULE> constructs that throw away captures...
     my @dubious
         = $grammar_spec
@@ -1440,21 +1435,22 @@ sub _build_grammar {
         # Rules make non-code literal whitespace match textual whitespace...
         if ($type eq 'rule') {
             state $CODE_OR_SPACE = qr{
-                  \(\?\?? (?&BRACED) \)
-                | (?<! \A) \s++ (?! \| | (?: \) \s* )? \z | \(\(?\?\&ws\) | \(\?\{ | \\s )
+                  \( \?\?? (?&BRACED) \)
+                | (?<! \A) \s++ (?! \| | (?: \) \s* )? \z | \(\(?\?\&ws\) | \(\?\??\{ | \\s )
                 (?(DEFINE) (?<BRACED> \{ (?: \\. | (?&BRACED) | [^{}] )* \} ) )
             }xms;
             $body =~ s{($CODE_OR_SPACE)}
-                      [substr($1,0,3) eq '(?{' ? $1 : '(?&ws)']exmsg;  #}
+                      [  substr($1,0,3) eq '(?{'
+                      || substr($1,0,4) eq '(??{' ? $1 : '(?&ws)']exmsg;  #}
         }
 
         $regex .= _translate_rule_def( $type, $qualifier, $name, $body, $objectify );
     }
 
     # Insert checkpoints into any user-defined code block...
-    $regex =~ s{ \(\?\{ (?!;) }<
-        (?{ local \@Regexp::Grammars::RESULT_STACK = \@Regexp::Grammars::RESULT_STACK; 
-    >xmsg;
+    $regex =~ s{ \( \?\?? \{ \K (?!;) }{
+        local \@Regexp::Grammars::RESULT_STACK = \@Regexp::Grammars::RESULT_STACK; 
+    }xmsg;
     
     # Check for any suspicious left-overs from the start of the regex...
     pos $regex = 0;
@@ -1498,7 +1494,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.001_004
+This document describes Regexp::Grammars version 1.001_005
 
 
 =head1 SYNOPSIS

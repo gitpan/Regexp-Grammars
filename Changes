@@ -4,6 +4,15 @@ Revision history for Regexp-Grammars
        Initial public release.
 
 
+1.001_004  Sun Aug  2 23:08:52 2009
 
-1.001_004  Sat Jul 25 00:49:40 2009
-           No changes logged
+    * Fixed mishandling of (??{....}) blocks
+
+    * Attempted to patch around three-way bug with lexicals in regexes
+      (further testing may be required to ensure patch is effective
+       across various perl configs)
+
+
+1.001_005  Sun Aug  2 23:12:46 2009
+
+    * Rerelease to sync numbering with CPAN

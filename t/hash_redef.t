@@ -9,8 +9,6 @@ my %hash = (
     fa   => 'a long long way to run',
 );
 
-my $other = 1;   # Needed to counteract bug in scoping (?)
-
 my $listified = do {
     use Regexp::Grammars;
     qr{ <[WORD=%hash]>+  <rule: hk> .{2} }xms;

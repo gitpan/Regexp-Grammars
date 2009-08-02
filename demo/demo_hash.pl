@@ -1,4 +1,3 @@
-#! /opt/local/bin/perl5.10.0
 use v5.10;
 use warnings;
 
@@ -9,12 +8,12 @@ my %hash = (
     fa => 'a long long way to run',
 );
 
-
-my $other = 1;
-
 my $grammar = do {
     use Regexp::Grammars;
-    qr{ <[WORD=%hash]>+ }xms;
+    qr{
+        <[_WORD=%hash]>+
+        <defns=(?{  [@hash{ @{$MATCH{_WORD}} }]  })>
+    }xms;
 };
 
 while (my $line = <>) {
