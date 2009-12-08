@@ -13,6 +13,44 @@ Revision history for Regexp-Grammars
        across various perl configs)
 
 
-1.001_005  Sun Aug  2 23:12:46 2009
+1.001_005  Sun Aug  2 23:08:52 2009
 
     * Rerelease to sync numbering with CPAN
+
+
+
+1.002  Tue Dec  8 21:30:11 2009
+
+    * Various doc tweaks
+
+    * Removed intermittent "uninitialized" warnings
+
+    * Added warning when no main regex specified
+
+    * Refined error message status indicators (now only errors get an
+      indicator for every separate message; info is consolidated)
+
+    * Fixed exponentiation associativity for demo_calc (thanks Schwern!)
+
+    * Fixed bug in charset parsing (thanks Dave!)
+
+    * Removed false error messages regarding explicitly use of built-in
+      <ws> and <hk> rules
+
+    * Fixed bug with negative lookaheads that incorporate subrule calls
+
+    * Localized $/ during debugger interactions
+
+    * Added <objrule: Class::Name=rulename> variation to allow distinct
+      "internal" and "external" names for objrules and objtokens
+      (thanks Casiano)
+    
+    * Fixed handling of (?#...) comments (thanks Casiano)
+
+    * Added pure grammar definitions: <grammar: NAME>
+
+    * Added inheritance from grammar definitions: <extends: NAME>
+
+    * Added fully qualified subrule calls to allow derived rules to call
+      base rules: <Base::Class::rulename>
+

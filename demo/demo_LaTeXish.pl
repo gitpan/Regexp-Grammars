@@ -71,11 +71,8 @@ my $parser = do{
     }xms
 };
 
-#use Data::Dumper 'Dumper'; warn Dumper $parser;
-
 my $input = do{ local $/; <DATA>};
 if ($input =~ $parser) {
-#    use Data::Dumper 'Dumper'; warn Dumper \%/;
     $/{file}->explain(0);
 }
 

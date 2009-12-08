@@ -27,4 +27,9 @@ demo/demo_list.pl
 demo/demo_metagrammar.pl
 demo/demo_require.pl
 demo/demo_whoson.pl
+t/charset.t
+t/comment.t
+t/grammar.t
+t/neg_lookahead.t
+t/obj_rename.t
 META.yml                                 Module meta-data (added by MakeMaker)

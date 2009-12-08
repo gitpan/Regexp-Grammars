@@ -28,6 +28,7 @@ my $calculator = do{
 };
 
 while (my $input = <>) {
+
     my $debug = $input =~ s{^show \s+}{}xms;
 
     if ($input =~ $calculator) {

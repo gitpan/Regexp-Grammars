@@ -4,7 +4,7 @@ use warnings;
 my %hash = (
     do => 'a deer',
     re => 'a drop of golden sun',
-    me => 'a name I call myself',
+    mi => 'a name I call myself',
     fa => 'a long long way to run',
 );
 

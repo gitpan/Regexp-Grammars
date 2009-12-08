@@ -11,12 +11,12 @@ my %hash = (
 
 my $listified = do {
     use Regexp::Grammars;
-    qr{ <[WORD=%hash]>+  <rule: hk> .{2} }xms;
+    qr{ <[WORD=%hash]>+ <rule: hk> .{2} }xms;
 };
 
 my $first_only = do {
     use Regexp::Grammars;
-    qr{ <WORD=%hash>    <rule: hk> .{2} }xms;
+    qr{ <WORD=%hash> <rule: hk> .{2} }xms;
 };
 
 my $no_cap = do {

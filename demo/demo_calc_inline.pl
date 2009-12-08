@@ -23,9 +23,14 @@ my $calculator = do{
           | <MATCH=Pow>
 
         <rule: Pow>
-            <X=Term> \^ <Y=Pow>
-                (?{ $MATCH = $MATCH{X} ** $MATCH{Y}; })
-          | <MATCH=Term>
+            <[Term]> ** \^
+                <MATCH= (?{
+                    my $exp = pop @{$MATCH{Term}};
+                    $exp = $_ ** $exp for @{$MATCH{Term}};
+                    $exp;
+                })>
+            |
+                <MATCH=Term>
 
         <rule: Term>
                <MATCH=Literal>

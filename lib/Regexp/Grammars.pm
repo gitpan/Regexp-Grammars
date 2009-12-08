@@ -1,4 +1,6 @@
+#! /opt/local/bin/perl5.10.0
 package Regexp::Grammars;
+
 
 use warnings;
 use strict;
@@ -7,7 +9,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = 1.001_005;
+our $VERSION = '1.002';
 
 # Load the module...
 sub import {
@@ -38,7 +40,7 @@ sub unimport {
     $^H{'Regexp::Grammars::active'} = 0;
 }
 
-# Tidy up the hoopy user-defined pragma interface...
+# Encapsulate the hoopy user-defined pragma interface...
 sub _module_is_active {
     return (caller 1)[10]->{'Regexp::Grammars::active'};
 }
@@ -83,6 +85,7 @@ sub _module_is_active {
 
 # Debugging levels indicate where to stop...
 our %DEBUG_LEVEL = (
+    same => undef,                           # No change in debugging mode
     off  => 0,                               # No more debugging
     run  => 1,   continue  => 1,             # Run to completion of regex match
                  match     => 2,   on => 2,  # Run to next successful submatch
@@ -91,7 +94,8 @@ our %DEBUG_LEVEL = (
 
 # Debugging levels can be abbreviated to one character during interactions...
 @DEBUG_LEVEL{ map {substr($_,0,1)} keys %DEBUG_LEVEL } = values %DEBUG_LEVEL;
-$DEBUG_LEVEL{o} = $DEBUG_LEVEL{off};
+$DEBUG_LEVEL{o} = $DEBUG_LEVEL{off};      # Not "on"
+$DEBUG_LEVEL{s} = $DEBUG_LEVEL{step};     # Not "same"
 
 # Width of leading context field in debugging messages is constrained...
 my $MAX_CONTEXT_WIDTH = 20;
@@ -211,7 +215,10 @@ sub _debug_notify {
 
     # Track previous severity and avoid repeating the same level...
     state $prev_severity = q{};
-    if ($severity eq $prev_severity) {
+    if ($severity !~ /\S/) {
+        # Do nothing
+    }
+    elsif ($severity eq 'info' && $prev_severity eq 'info' ) {
         $severity = q{};
     }
     else {
@@ -237,9 +244,10 @@ sub _debug_interact {
     if (-t *Regexp::Grammars::LOGFILE
     && defined $DEBUG
     && ($DEBUG_LEVEL{$DEBUG}//0) >= $DEBUG_LEVEL{$min_debug_level}) { 
+        local $/ = "\n";  # ...in case some caller is being clever
         INPUT:
         while (1) {
-            my $cmd = <>;
+            my $cmd = readline // q{};
             chomp $cmd;
 
             # Input of 'd' means 'display current result frame'...
@@ -253,7 +261,7 @@ sub _debug_interact {
             }
             # Any other (valid) input changes debugging level and continues...
             else {
-                if (exists $DEBUG_LEVEL{$cmd}) { $DEBUG = $cmd; }
+                if (defined $DEBUG_LEVEL{$cmd}) { $DEBUG = $cmd; }
                 last INPUT;
             }
         }
@@ -600,6 +608,10 @@ sub _pop_current_result_frame_with_list {
 
 #=====[ MISCELLANEOUS CONSTANTS ]=========================
 
+# Namespace in which grammar inheritance occurs...
+my $CACHE = 'Regexp::Grammars::_CACHE_::';
+my $CACHE_LEN = length $CACHE;
+
 # This code inserted at the start of every grammar regex
 #    (initializes the result stack cleanly and backtrackably, via local)...
 my $PROLOGUE = q{((?{; @! = () if !pos;
@@ -629,19 +641,24 @@ my $EPILOGUE = q{
 #=====[ MISCELLANEOUS PATTERNS THAT MATCH USEFUL THINGS ]========
 
 # Match an identifier...
-my $IDENT = q{[^\W\d]\w*+};
+my $IDENT     = qr{ [^\W\d] \w*+ }xms;
+my $QUALIDENT = qr{ (?: $IDENT :: )*+ $IDENT }xms;
 
 # Match balanced parentheses, taking into account \-escapes and []-escapes...
 my $PARENS = qr{
     (?&PARENS)
     (?(DEFINE)
         (?<PARENS> \( (?: \\. | (?&PARENS) | (?&CHARSET) | [^][()\\]++)*+ \) )
-        (?<CHARSET> \[ \^?+ \]?+ [^]]*+ \] )
+        (?<CHARSET> \[ \^?+ \\?+ \]?+ [^]]*+ \] )
+
     )
 }xms;
 
 
 #=====[ SUPPORT FOR TRANSLATING GRAMMAR-ENHANCED REGEX TO NATIVE REGEX ]====
+
+# Store any specified grammars...
+my %user_defined_grammar;
 
 my %REPETITION_DESCRIPTION_FOR = (
     '+'  => 'once or more',
@@ -658,7 +675,8 @@ my %REPETITION_DESCRIPTION_FOR = (
 sub _translate_raw_regex {
     my ($regex, $debug_build) = @_;
 
-    my $is_comment = substr($regex, 0, 1) eq q{#};
+    my $is_comment =  substr($regex, 0, 1) eq q{#}
+                   || substr($regex, 0, 3) eq q{(?#};
     my $visible_regex = _squeeze_ws($regex);
 
     # Report how regex was interpreted, if requested to...
@@ -671,6 +689,10 @@ sub _translate_raw_regex {
             ),
         );
     }
+
+    # Replace negative lookahead with one that works under R::G...
+    $regex =~ s{\(\?!}{(?!(?!)|}gxms;
+    # ToDo: Also replace positive lookahead with one that works under R::G...
 
     return $is_comment ? q{} : $regex;
 }
@@ -736,7 +758,8 @@ sub _translate_error_directive {
         $msg = qq{q{$msg, but found '}.\$CONTEXT.q{' instead}};
     }
     else {
-        $msg = qq{q{$msg}};
+        $msg = quotemeta $msg;
+        $msg = qq{qq{$msg}};
     }
 
     # Report how directive was interpreted, if requested to...
@@ -903,6 +926,10 @@ sub _translate_subrule_call {
          $debug_build, $debug_runtime, $valid_subrule_names_ref)
         = @_;
 
+    # Transform qualified subrule names...
+    my $internal_subrule = $subrule;
+    $internal_subrule =~ s{::}{_88_}gxms;
+
     # Shortcircuit if unknown subrule invoked...
     if (!$valid_subrule_names_ref->{$subrule}) {
         _debug_notify( error =>
@@ -960,7 +987,7 @@ sub _translate_subrule_call {
     # Translate to standard regex code...
     return qq{(?:(?{;
             local \@Regexp::Grammars::RESULT_STACK = (\@Regexp::Grammars::RESULT_STACK, {});
-            $debug_pre})((?&$subrule))(?{;
+            $debug_pre})((?&$internal_subrule))(?{;
                 local \@Regexp::Grammars::RESULT_STACK = (
                     $save_code
                 );$debug_post
@@ -968,7 +995,7 @@ sub _translate_subrule_call {
 }
 
 sub _translate_rule_def {
-    my ($type, $qualifier, $name, $body, $objectify) = @_;;
+    my ($type, $qualifier, $name, $callname, $qualname, $body, $objectify) = @_;;
 
     # Return object if requested...
     my $objectification =
@@ -980,9 +1007,11 @@ sub _translate_rule_def {
     # Each rule or token becomes a DEFINE'd Perl 5.10 named capture...
     return qq{
         (?(DEFINE)
-            (?<$name> (?{\$Regexp::Grammars::RESULT_STACK[-1]{'!'}=\$#{!};})
+            (?<$qualname>
+            (?<$callname> (?{\$Regexp::Grammars::RESULT_STACK[-1]{'!'}=\$#{!};})
                 (?:$body) $objectification
-                (?{;\$#{!}=delete \$Regexp::Grammars::RESULT_STACK[-1]{'!'};})
+                (?{;\$#{!}=delete(\$Regexp::Grammars::RESULT_STACK[-1]{'!'})//0;})
+            )
             )
         )
     };
@@ -991,7 +1020,8 @@ sub _translate_rule_def {
 
 # Locate any valid <...> sequences and replace with native regex code...
 sub _translate_subrule_calls {
-    my ($grammar_spec,
+    my ($rule_name,
+        $grammar_spec,
         $compiletime_debugging_requested,
         $runtime_debugging_requested,
         $pre_match_debug,
@@ -1011,19 +1041,19 @@ sub _translate_subrule_calls {
         <
         (?:
             (?<self_subrule_scalar_nocap> 
-                   \.                            \s* (?<subrule>(?&IDENT))  \s*      
+                   \.                            \s* (?<subrule>(?&QUALIDENT))  \s*      
             )
           | (?<self_subrule_scalar> 
-                                                 \s* (?<subrule>(?&IDENT))  \s*      
+                                                 \s* (?<subrule>(?&QUALIDENT))  \s*      
             )
           | (?<self_subrule_list> 
-                   \[                            \s* (?<subrule>(?&IDENT))  \s* \]
+                   \[                            \s* (?<subrule>(?&QUALIDENT))  \s* \]
             )
           | (?<alias_subrule_scalar>   
-                       (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&IDENT))  \s*    
+                       (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&QUALIDENT))  \s*    
             )
           | (?<alias_subrule_list>
-                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&IDENT))  \s* \] 
+                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&QUALIDENT))  \s* \] 
             )
           | (?<alias_parens_scalar_nocap> 
                    \.  (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s*    
@@ -1052,6 +1082,12 @@ sub _translate_subrule_calls {
                     debug \s* : \s* (?<cmd> run | match | step | try | off | on) \s*
             )
           |
+            (?<yadaerror_directive>
+                    [.][.][.]
+                  | [!][!][!]
+                  | [?][?][?]
+            )
+          |
             (?<autoerror_directive>
                     error \s*+ : \s*+ 
             )
@@ -1065,16 +1101,27 @@ sub _translate_subrule_calls {
         )
         > (?<modifier> \s* (?! \*\* ) [?+*][?+]? | )
       |
-        (?<raw_regex>  \\. | (?&PARENS) | (?&CHARSET) | \# [^\n]*+ | [^][<>#\\]++ )
+        (?<raw_regex> 
+              \s++
+            | \\.
+            | \(\?!
+            | \(\?\# [^)]* \)
+            | (?&PARENCODE)
+            | (?&PARENS)
+            | (?&CHARSET)
+            | \# [^\n]*+
+            | [^][()<>#\\]++
+        )
     )
 
     (?(DEFINE)
-        (?<PARENS>    \(     (?: \\. | (?&PARENS) | (?&CHARSET) | [^][()\\<>]++ )*+  \)   )
-        (?<BRACES>    \{     (?: \\. | (?&BRACES) |               [^{}\\]++   )*+    \}   )
-        (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES) |               [^{}\\]++   )*+    \}\) )
-        (?<HASH>      \% (?&IDENT) (?: :: (?&IDENT) )*                                    )
-        (?<CHARSET>   \[              \^?+ \]?+ [^]]*+                               \]   ) 
-        (?<IDENT>     [^\W\d]\w*+                                                         )
+        (?<PARENS>    \(     (?: \\. | (?&PARENCODE) | (?&PARENS) | (?&CHARSET) | [^][()\\<>]++ )*+ \)   )
+        (?<BRACES>    \{     (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}   )
+        (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}\) )
+        (?<HASH>      \% (?&IDENT) (?: :: (?&IDENT) )*                                                   )
+        (?<CHARSET>   \[              \^?+ \\?+ \]?+ [^]]*+                                         \]   )
+        (?<IDENT>     [^\W\d]\w*+                                                                        )
+        (?<QUALIDENT> (?: [^\W\d]\w*+ :: )*  [^\W\d]\w*+                                                 )
     )
     }{ 
         my $curr_construct = $+{construct};
@@ -1185,6 +1232,14 @@ sub _translate_subrule_calls {
                     $compiletime_debugging_requested
                 );
             }
+            elsif ($+{yadaerror_directive}) {
+                _translate_error_directive(
+                    $curr_construct,
+                    ($+{yadaerror_directive} eq '???' ?  'warning' : 'error'),
+                    "Cannot match $rule_name (not implemented)",
+                    $compiletime_debugging_requested
+                );
+            }
             else {
                 die qq{Internal error: this shouldn't happen!\nNear $curr_construct};
             }
@@ -1283,6 +1338,69 @@ sub _open_log {
     }
 }
 
+# Regex to detect if other regexes contain a grammar specification...
+my $GRAMMAR_DIRECTIVE
+    = qr{ < grammar: \s* (?<grammar_name> $QUALIDENT ) \s* > }xms;
+
+# Regex to detect if other regexes contain a grammar inheritance...
+my $EXTENDS_DIRECTIVE
+    = qr{ < extends: \s* (?<base_grammar_name> $QUALIDENT ) \s* > }xms;
+
+# Cache of rule/token names within defined grammars...
+my %subrule_names_for;
+
+# Detect and translate any requested grammar inheritances...
+sub _extract_inheritances {
+    my ($regex, $compiletime_debugging_requested, $derived_grammar_name) = @_;
+
+
+    # Detect and remove inheritance requests...
+    while ($regex =~ s{$EXTENDS_DIRECTIVE}{}xms) {
+        # Normalize grammar name and report...
+        my $orig_grammar_name = $+{base_grammar_name};
+        my $grammar_name = $orig_grammar_name;
+        if ($grammar_name !~ /::/) {
+            $grammar_name = caller(2) . "::$grammar_name";
+        }
+
+        if (exists $user_defined_grammar{$grammar_name}) {
+            if ($compiletime_debugging_requested) {
+                _debug_notify( info =>
+                    "Processing inheritance request for $grammar_name...",
+                    "",
+                );
+            }
+
+            # Specify new relationship...
+            no strict 'refs';
+            push @{$CACHE.$derived_grammar_name.'::ISA'}, $CACHE.$grammar_name;
+        }
+        else {
+            my (undef, $file, $line) = caller(2);
+            _debug_notify( fatal =>
+                "Inheritance from unknown grammar requested",
+                "in <extends: $grammar_name>",
+                "at $file line $line",
+            );
+        }
+    }
+
+    # Retrieve ancestors in C3 dispatch order and remove prefixes...
+    use mro;
+    my @ancestors = @{mro::get_linear_isa($CACHE.$derived_grammar_name, 'c3')};
+    shift @ancestors;
+    for my $ancestor (@ancestors) {
+        substr($ancestor,0,$CACHE_LEN,q{});
+    }
+
+    # Extract subrule names and implementations for ancestors...
+    my %subrule_names = map { %{$subrule_names_for{$_}} } @ancestors;
+    my $implementation
+        = join "\n", map { $user_defined_grammar{$_} } @ancestors;
+
+    return $implementation, \%subrule_names;
+}
+
 # Transform grammar-augmented regex into pure Perl 5.10 regex...
 sub _build_grammar {
     my ($grammar_spec) = @_;
@@ -1338,7 +1456,8 @@ sub _build_grammar {
     # Look ahead for any run-time debugging requests...
     my $runtime_debugging_requested
         = $grammar_spec =~ m{
-              ^ [^#]* < debug: \s* (run | match | step | try | on | off) \s* >
+              ^ [^#]*
+              < debug: \s* (run | match | step | try | on | off | same ) \s* >
             | \$DEBUG (?! \s* (?: \[ | \{) )
         }xms;
 
@@ -1364,62 +1483,166 @@ sub _build_grammar {
 
     # Subdivide into rule and token definitions, preparing to process each...
     my @defns = split m{
-            < (obj|)(rule|token) \s*+ : \s*+ ((?:${IDENT}::)*+)($IDENT) \s* >
+            ^ [^#\n]*? \K < (obj|)(rule|token) \s*+ :
+              \s*+ ((?:${IDENT}::)*+) (?: ($IDENT) \s*+ = \s*+ )?+
+              ($IDENT)
+            \s* >
         }xms, $grammar_spec;
 
     # Extract up list of names of defined rules/tokens...
     # (Name is every 4th item out of every five, skipping the first item)
-    my %subrule_names = map { $_ => 1 }
-                            @defns[ map { $_ * 5 + 4 } 0 .. ((@defns-1)/5-1) ];
+    my @subrule_names = @defns[ map { $_ * 6 + 5 } 0 .. ((@defns-1)/6-1) ];
+    my %subrule_names;
 
-    # Report how main regex was interpreted, if requested to...
-    if ($compiletime_debugging_requested) {
-        _debug_notify( info =>
-            "Processing the main regex before any rule definitions",
+    # Build a look-up table of subrule names, checking for duplicates...
+    for my $subrule_name (@subrule_names) {
+        if (++$subrule_names{$subrule_name} == 2) {
+            _debug_notify( warn =>
+                "Multiple definitions for <$subrule_name>",
+                "(only the first definition will be used)",
+            );
+        }
+    }
+
+    # Add the built-ins...
+    @subrule_names{'ws', 'hk'} = (1,1);
+
+    # An empty main rule will never match anything...
+    my $main_regex = shift @defns;
+    if ($main_regex =~ m{\A (?: \s++ | \# [^\n]++ )* \z}xms) {
+        _debug_notify( error =>
+            "No main regex specified before rule definitions.",
+            "Grammar will never match anything.",
+            "(Did you forget a <grammar:...> specification?)",
+            "",
         );
     }
 
-    # Any actual regex is processed first...
-    my $regex = _translate_subrule_calls(
-        shift @defns,
-        $compiletime_debugging_requested,
-        $runtime_debugging_requested,
-        $pre_match_debug,
-        $post_match_debug,
-        'valid input',         # Expected...what?
-        \%subrule_names,
-    );
+    # Compile the regex or grammar...
+    my $regex = q{};
+    my $grammar_name;
+    my $is_grammar;
 
-    # Report how construct was interpreted, if requested to...
-    if ($compiletime_debugging_requested) {
-        _debug_notify( q{} =>
-            q{   |},
-            q{    \\___End of main regex},
-            q{},
-        );
+    # Is this a grammar specification?
+    if ($main_regex =~ $GRAMMAR_DIRECTIVE) {
+        # Normalize grammar name and report...
+        $grammar_name = $+{grammar_name};
+        if ($grammar_name !~ /::/) {
+            $grammar_name = caller(1) . "::$grammar_name";
+        }
+        $is_grammar = 1;
     }
+    else {
+        state $dummy_grammar_index = 0;
+        $grammar_name = '______' . $dummy_grammar_index++;
+    }
+
+    # Extract any inheritance information...
+    my ($inherited_rules, $inherited_subrule_names)
+        = _extract_inheritances(
+            $main_regex,
+            $compiletime_debugging_requested,
+            $grammar_name
+          );
+
+    # Remove <extends:...> requests...
+    $main_regex =~ s{ $EXTENDS_DIRECTIVE }{}gxms;
+
+    # Add inherited subrule names to allowed subrule names;
+    @subrule_names{ keys %{$inherited_subrule_names} }
+        = values %{$inherited_subrule_names};
+
+    # If so, set up to save the grammar...
+    if ($is_grammar) {
+        # Normalize grammar name and report...
+        if ($grammar_name !~ /::/) {
+            $grammar_name = caller(1) . "::$grammar_name";
+        }
+        if ($compiletime_debugging_requested) {
+            _debug_notify( info =>
+                "Processing definition of grammar $grammar_name...",
+                "",
+            );
+        }
+
+        # Remove the grammar directive...
+        $main_regex =~ s{ $GRAMMAR_DIRECTIVE | [#] [^\n]+ }{}gxms;
+
+        # Check for anything else in the main regex...
+        if ($main_regex =~ /\S/) {
+            _debug_notify( warn =>
+                "Unexpected item before first subrule specification",
+                "in definition of <grammar: $grammar_name>:",
+                map({ "    $_"} grep /\S/, split "\n", $main_regex),
+                "(this will be ignored when defining the grammar)",
+            );
+        }
+
+        # Remember set of valid subrule names...
+        $subrule_names_for{$grammar_name} 
+            = {
+                map { ($_ => 1,  $grammar_name.'::'.$_ => 1 ) }
+                  keys %subrule_names
+              };
+    }
+    else { #...not a grammar specification
+        # Report how main regex was interpreted, if requested to...
+        if ($compiletime_debugging_requested) {
+            _debug_notify( info =>
+                "Processing the main regex before any rule definitions",
+            );
+        }
+
+        # Any actual regex is processed first...
+        $regex = _translate_subrule_calls(
+            "main pattern to match",
+            $main_regex,
+            $compiletime_debugging_requested,
+            $runtime_debugging_requested,
+            $pre_match_debug,
+            $post_match_debug,
+            'valid input',         # Expected...what?
+            \%subrule_names,
+        );
+
+        # Report how construct was interpreted, if requested to...
+        if ($compiletime_debugging_requested) {
+            _debug_notify( q{} =>
+                q{   |},
+                q{    \\___End of main regex},
+                q{},
+            );
+        }
+    }
+
+    # Build common prefix to fully qualified rulenames
+    my $qual_prefix = $grammar_name.'::';
+    $qual_prefix =~ s/::/_88_/g;
 
     #  Then iterate any following rule definitions...
     while (@defns) {
         # Grab details of each rule defn (as extracted by previous split)...
-        my ($objectify, $type, $qualifier, $name, $body) = splice(@defns, 0, 5);
+        my ($objectify, $type, $qualifier, $name, $callname, $body) = splice(@defns, 0, 6);
+        $name //= $callname;
+        my $qualified_name = $qual_prefix.$callname;
 
         # Report how construct was interpreted, if requested to...
         if ($compiletime_debugging_requested) {
             _debug_notify( info =>
-                "Defining a rule: <$name>",
+                "Defining a $type: <$callname>",
                 "   |...Returns: " . ($objectify ? "an object of class '$qualifier$name'" : "a hash"),
             );
         }
 
         # Translate any nested <...> constructs...
         $body = _translate_subrule_calls(
+            "<$type: $callname>",
             $body,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
             $pre_match_debug,
             $post_match_debug,
-            lc($name),                # Expected...what?
+            lc($callname),                # Expected...what?
             \%subrule_names,
         );
 
@@ -1444,7 +1667,7 @@ sub _build_grammar {
                       || substr($1,0,4) eq '(??{' ? $1 : '(?&ws)']exmsg;  #}
         }
 
-        $regex .= _translate_rule_def( $type, $qualifier, $name, $body, $objectify );
+        $regex .= _translate_rule_def( $type, $qualifier, $name, $callname, $qualified_name, $body, $objectify );
     }
 
     # Insert checkpoints into any user-defined code block...
@@ -1456,7 +1679,7 @@ sub _build_grammar {
     pos $regex = 0;
 
     # Report anything that starts like a subrule, but isn't...
-    my %seen;
+    my %seen = ( '<ws>' => 1, '<hk>' => 1 );  # These two are autogenerated
     while ($regex =~ m{( (?<! \(\? | q\{ ) (?<! \\) < [[.]* $IDENT \s* (:?) .*? [\n>] )}gxms) {
         my $construct = $1;
         my $something = $2 ? 'directive' : 'subrule call';
@@ -1473,8 +1696,17 @@ sub _build_grammar {
         _debug_notify( q{} => q{} );
     }
 
-    # Aggregrate the final grammar...
-    _complete_regex($regex, $pre_match_debug, $post_match_debug);
+    # If a grammar definition, save grammar and return a placeholder...
+    if ($is_grammar) {
+        $user_defined_grammar{$grammar_name} = $regex;
+        return qq{(?{
+            warn "Can't match against <grammar: $grammar_name>\n";
+        })(*COMMIT)(?!)};
+    }
+    # Otherwise, aggregrate the final grammar...
+    else {
+        return _complete_regex($regex.$inherited_rules, $pre_match_debug, $post_match_debug);
+    }
 }
 
 sub _complete_regex {
@@ -1494,7 +1726,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.001_005
+This document describes Regexp::Grammars version 1.002
 
 
 =head1 SYNOPSIS
@@ -1555,7 +1787,7 @@ This document describes Regexp::Grammars version 1.001_005
             (has | is)             #  - Match an alternative and capture
             (?{ $MATCH = uc $^N }) #  - Use captured text as subrule result
 
-    };
+    }x;
 
     # Match the grammar against some text...
     if ($text =~ $parser) {
@@ -1572,16 +1804,26 @@ This document describes Regexp::Grammars version 1.001_005
     use Regexp::Grammars;    Allow enhanced regexes in lexical scope
     %/                       Result-hash for successful grammar match
 
+=head2 Defining and using named grammars...
+
+    <grammar:  GRAMMARNAME>  Define a named grammar that can be inherited
+    <extends:  GRAMMARNAME>  Current grammar inherits named grammar's rules
+
 =head2 Defining rules in your grammar...
 
-    <rule:     IDENTIFIER>   Define rule with magic whitespace
-    <token:    IDENTIFIER>   Define rule without magic whitespace
-    <objrule:  IDENTIFIER>   Define rule returning blessed result-hash
-    <objtoken: IDENTIFIER>   Define token returning blessed result-hash
+    <rule:     RULENAME>     Define rule with magic whitespace
+    <token:    RULENAME>     Define rule without magic whitespace
+
+    <objrule:  CLASS= NAME>  Define rule that blesses return-hash into class
+    <objtoken: CLASS= NAME>  Define token that blesses return-hash into class
+
+    <objrule:  CLASS>        Shortcut for above (rule name derived from class)
+    <objtoken: CLASS>        Shortcut for above (token name derived from class)
+
 
 =head2 Matching rules in your grammar...
 
-    <RULENAME>               Call named subrule,
+    <RULENAME>               Call named subrule (may be fully qualified)
                              save result to $MATCH{RULENAME}
 
     <%HASH>                  Match longest possible key of hash
@@ -1723,7 +1965,9 @@ containing:
     \documentclass[a4paper,11pt]{article}
     \author{D. Conway}
 
-it would automatically extract the following data structure:
+it would automatically extract a data structure equivalent to the
+following (but with several extra "empty" keys, which are described in
+L<Subrule results>):
 
     {
         'file' => {
@@ -1799,8 +2043,8 @@ during the parse.
 
 =head2 Structure of a Regexp::Grammars grammar
 
-A Regexp::Grammars specification consists of a pattern (which may
-include both standard Perl 5.10 regex syntax, as well as special
+A Regexp::Grammars specification consists of a I<start-pattern> (which
+may include both standard Perl 5.10 regex syntax, as well as special
 Regexp::Grammars directives), followed by one or more rule or token
 definitions.
 
@@ -1809,7 +2053,7 @@ For example:
     use Regexp::Grammars;
     my $balanced_brackets = qr{
 
-        # Pattern...
+        # Start-pattern...
         <paren_pair> | <brace_pair>
 
         # Rule definition...
@@ -1825,8 +2069,9 @@ For example:
             \\ . 
     }xms;
 
-The initial pattern acts like the "top" rule of the grammar, and must be
-matched completely for the grammar to match.
+The start-pattern at the beginning of the grammar acts like the
+"top" rule of the grammar, and must be matched completely for the
+grammar to match.
 
 The rules and tokens are declarations only and they are not directly matched.
 Instead, they act like subroutines, and are invoked by name from the
@@ -2360,8 +2605,171 @@ keys. For example:
         [ACGT]{10,}   # Key is a base sequence of at least 10 pairs
 
 Matching a hash key in this way is typically I<significantly> faster
-than matching a full set of alternations. Specifically, it is
-I<O(length of longest potential key)>, instead of I<O(number of keys)>.
+than matching a large set of alternations. Specifically, it is
+I<O(length of longest potential key) ^ 2>, instead of I<O(number of keys)>.
+
+
+=head1 Named grammars
+
+All the grammars shown so far are confined to a single regex. However,
+Regexp::Grammars also provides a mechanism that allows you to defined
+named grammars, which can then be imported into other regexes. This 
+gives the a way of modularizing common grammatical components.
+
+=head2 Defining a named grammar
+
+You can create a named grammar using the C<< <grammar:...> >>
+directive. This directive must appear before the first rule definition
+in the grammar, and instead of any start-rule. For example:
+
+    qr{
+        <grammar: List::Generic>
+
+        <rule: List>
+            <MATCH=[Item]> ** <Separator>
+
+        <rule: Item>
+            \S++
+
+        <token: Separator>
+            \s* , \s*
+    }x;
+
+Thsi creates a grammar named C<List::Generic>, and installs it in the module's
+internal caches, for future reference.
+
+Note that there is no need (or reason) to assign the resulting regex to
+a variable, as the named grammar cannot itself be matched against.
+
+
+=head2 Using a named grammar
+
+To make use of a named grammar, you need to incorporate it into another
+grammar, by inheritance. To do that, use the C<< <extends:...> >>
+directive, like so:
+
+    my $parser = qr{
+        <extends: List::Generic>
+
+        <List>
+    }x;
+
+The C<< <extends:...> >> directive incorporates the rules defined in the
+specified grammar into the current regex. You can then call any of those
+rules in the start-pattern.
+
+
+=head2 Overriding an inherited rule or token
+
+Subrule dispatch within a grammar is always polymorphic. That is, when a
+subrule is called, the most-derived rule of the same name within the
+grammar's hierarchy is invoked.
+
+So, to replace a particular rule within grammar, you simply need to inherit
+that grammar and specify new, more-specific versions of any rules you
+want to change. For example:
+
+    my $list_of_integers = qr{
+        <List>
+
+        # Inherit rules from base grammar...
+        <extends: List::Generic>
+
+        # Replace Item rule from List::Generic...
+        <rule: Item>    
+            [+-]? \d++
+    }x;
+
+You can also use C<< <extends:...> >> in other named grammars, to create
+hierarchies:
+
+    qr{
+        <grammar: List::Integral>
+        <extends: List::Generic>
+
+        <token: Item>
+            [+-]? <MATCH=(<.Digit>+)>
+
+        <token: Digit>
+            \d
+    }x;
+
+    qr{
+        <grammar: List::ColonSeparated>
+        <extends: List::Generic>
+
+        <token: Separator>
+            \s* : \s*
+    }x;
+
+    qr{
+        <grammar: List::Integral::ColonSeparated>
+        <extends: List::Integral>
+        <extends: List::ColonSeparated>
+    }x;
+
+As shown in the previous example, Regexp::Grammars allows you
+to multiply inherit two (or more) base grammars. For example, the
+C<List::Integral::ColonSeparated> grammar takes the definitions of
+C<List> and C<Item> from the C<List::Integral> grammar, and the
+definition of C<Separator> from C<List::ColonSeparated>.
+
+Note that grammars dispatch subrule calls using C3 method lookup, rather
+than Perl's older DFS lookup. That's why C<List::Integral::ColonSeparated>
+correctly gets the more-specific C<Separator> rule defined in
+C<List::ColonSeparated>, rather than the more-generic version defined in
+C<List::Generic> (via C<List::Integral>). See C<perldoc mro> for more
+discussion of the C3 dispatch algorithm.
+
+
+=head2 Augmenting an inherited rule or token
+
+Instead of replacing an inherited rule, you can augment it.
+
+For example, if you need a grammar for lists of hexademical
+numbers, you could inherit the behaviour of C<List::Integral>
+and add the hex digits to its C<Digit> token:
+
+    my $list_of_hexadecimal = qr{
+        <List>
+
+        <extends: List::Integral>
+
+        <token: Digit>
+            <List::Integral::Digit>
+          | [A-Fa-f]  
+    }x;
+
+If you call a subrule using a fully qualified name (such as
+C<< <List::Integral::Digit> >>), the grammar calls that
+version of the rule, rather than the most-derived version.
+
+Note, however, that fully qualified subrule calls are I<not> (yet)
+polymorphically dispatched. This means that you cannot currently just
+specify the name some ancestor grammar (or C<SUPER> or C<NEXT> for that
+matter) and have the grammar find the correct inherited version of the
+subrule. At present you must specify the name of the exact ancestor
+grammar whose rule you want. This limitation will be removed in a
+future release.
+
+
+=head2 Debugging named grammars
+
+Named grammars are independent of each other, even when inherited. This
+means that, if debugging is enabled in a derived grammar, it will not be
+active in any rules inherited from a base grammar, unless the base
+grammar also included a C<< <debug:...> >> directive.
+
+This is a deliberate design decision, as activating the debugger adds a
+significant amount of code to each grammar's implementation, which is
+detrimental to the matching performance of the resulting regexes.
+
+If you need to debug a named grammar, the best approach is to include a
+C<< <debug: same> >> directive at the start of the grammar. The presence
+of this directive will ensure the necessary extra debugging code is
+included in the regex implementing the grammar, while setting C<same>
+mode will ensure that the debugging mode isn't altered when the matcher
+uses the inherited rules.
 
 
 =head1 Common parsing techniques
@@ -2709,37 +3117,61 @@ each one invoking the appropriate C<explain()> method according to the type of
 node encountered.
 
 The only problem is that, by default, Regexp::Grammars returns a tree of
-plain-old hashes, not LaTeX::whatever objects. Fortunately, it's easy to
+plain-old hashes, not LaTeX::Whatever objects. Fortunately, it's easy to
 request that the result hashes be automatically blessed into the appropriate
 classes, using the C<< <objrule:...> >> and C<< <objtoken:...> >> directives.
 
-These directives are identical to the C<< <rule:...> >> and C<<
-<token:...> >> directives (respectively), except that the rule or
-token they create will also bless the hash it normally returns,
-converting it to an object of a class whose name is the same as the
-rule or token itself.
+These directives are identical to the C<< <rule:...> >> and C<< <token:...> >>
+directives (respectively), except that the rule or token they create
+will also bless the hash it normally returns, converting it to an object
+of a specified class.
+
+The generic syntax for these types of rules and tokens is:
+
+    <objrule:  CLASS::NAME = RULENAME  >
+    <objtoken: CLASS::NAME = TOKENNAME >
 
 For example:
 
-    <objrule: Element>
-        # ...Defines a rule that can be called as <Element>
-        # ...and which returns a hash-based Element object
+    <objrule: LaTeX::Element=component> 
+        # ...Defines a rule that can be called as <component>
+        # ...and which returns a hash-based LaTeX::Element object
 
-The C<IDENTIFIER> of the rule or token may also be fully qualified. In
-such cases, the rule or token is defined using only the final "short name",
-but the result object is blessed using the fully qualified "long name".
+    <objtoken: LaTex::Literal=atom>
+        # ...Defines a token that can be called as <atom>
+        # ...and which returns a hash-based LaTeX::Literal object
+
+Note that, just as in L<aliased subrule calls|"Renaming subrule results">,
+the name by which something is referred to outside the grammar (in this
+case, the class name) comes I<before> the C<=>, whereas the name that it
+is referred to inside the grammar comes I<after> the C<=>.
+
+You can freely mix object-returning and plain-old-hash-returning rules
+and tokens within a single grammar, though you have to be careful not to
+subsequently try to call a method on any of the unblessed nodes.
+
+
+=head3 A naming shortcut
+
+If an C<< <objrule:...> >> or C<< <objtoken:...> >> is defined with a
+class name that is I<not> followed by C<=> and a rule name, then the
+rule name is determined automatically from the classname.
+Specifically, the final component of the classname (i.e. after the last
+C<::>, if any) is used.
+
 For example:
 
     <objrule: LaTeX::Element> 
         # ...Defines a rule that can be called as <Element>
         # ...and which returns a hash-based LaTeX::Element object
 
-This can be useful to ensure that returned objects don't collide with
-other namespaces in your program.
+    <objtoken: LaTex::Literal>
+        # ...Defines a token that can be called as <Literal>
+        # ...and which returns a hash-based LaTeX::Literal object
 
-Note that you can freely mix object-returning and plain-old-hash-returning
-rules and tokens within a single grammar, though you have to be careful
-not to subsequently try to call a method on any of the unblessed nodes.
+    <objtoken: Comment>
+        # ...Defines a token that can be called as <Comment>
+        # ...and which returns a hash-based Comment object
 
 
 =head1 Debugging
@@ -2843,6 +3275,7 @@ commands are:
     <debug: on>    - Enable debugging, stop when entire grammar matches
     <debug: match> - Enable debugging, stope when a rule matches
     <debug: try>   - Enable debugging, stope when a rule is tried
+    <debug: same>  - Continue debugging (or not) as currently
     <debug: off>   - Disable debugging and continue parsing silently
 
     <debug: continue> - Synonym for <debug: on>
@@ -3050,10 +3483,13 @@ trailing C<+> prevents the C<{1,3}> repetition from backtracking to a smaller
 number of digits if the C<< <require:...> >> fails.
 
 
-=head2 Error messages
+=head2 Handling failure
 
 The module has limited support for error reporting from within a grammar,
-in the form of the C<< <error:...> >> and C<< <warning:...> >> directives.
+in the form of the C<< <error:...> >> and C<< <warning:...> >> directives
+and their shortcuts: C<< <...> >>, C<< <!!!> >>, and C<< <???> >>
+
+=head3 Error messages
 
 The C<< <error: MSG> >> directive queues a I<conditional> error message
 within C<@!> and then fails to match (that is, it is equivalent to a
@@ -3134,7 +3570,7 @@ which merely attempts to call C<< <rule: error> >> if the first
 alternative fails.
 
 
-=head2 Warning messages
+=head3 Warning messages
 
 Sometimes, you want to detect problems, but not invalidate the entire
 parse as a result. For those occasions, the module provides a "less stringent"
@@ -3165,6 +3601,35 @@ Note that, because they do not induce failure, two or more
 C<< <warning:...> >> directives can be "stacked" in sequence,
 as in the previous example.
 
+=head3 Stubbing
+
+The module also provides three useful shortcuts, specifically to 
+make it easy to declare, but not define, rules and tokens.
+
+The C<< <...> >> and C<< <???> >> directives are equivalent to
+the directive:
+
+    <error: Cannot match RULENAME (not implemented)>
+
+The C<< <???> >> is equivalent to the directive:
+
+    <warning: Cannot match RULENAME (not implemented)>
+
+For example, in the following grammar:
+
+    <grammar: List::Generic>
+
+    <rule: List>
+        <[Item]> ** (\s*,\s*)
+
+    <rule: Item>
+        <...>
+
+the C<Item> rule is declared but not defined. That means the grammar
+will compile correctly, (the C<List> rule won't complain about a call to
+a non-existent C<Item>), but if the C<Item> rule isn't overridden in
+some derived grammar, a match-time error will occur when C<List> tries
+to match the C<< <...> >> within C<Item>. 
 
 
 =head1 Scoping considerations
@@ -3267,7 +3732,7 @@ normally returns, converting it to an object of a class whose name is
 the same as the rule or token itself.
 
 
-=item C<< <require: (?{ CODE })  > >>
+=item C<< <require: (?{ CODE }) > >>
 
 The code block is executed and if its final value is true, matching continues
 from the same position. If the block's final value is false, the match fails at
@@ -3309,6 +3774,8 @@ The available C<COMMAND>'s are:
 
     <debug: try>         ___ Debug until next subrule call or match
     <debug: step>        _/
+
+    <debug: same>        ___ Maintain current debugging mode
 
     <debug: off>         ___ No debugging
 
@@ -3584,6 +4051,27 @@ module's internal stack to fall out of sync with the regex match.
 For the time being, you need to make sure that grammar rules don't appear
 inside a "non-backtracking" directive.
 
+=item *
+
+Similarly, parsing with Regexp::Grammars will fail if your grammar
+places a subrule call within a positive look-ahead, since
+these don't play nicely with the data stack.
+
+This may be an internal problem with perl itself or it may simply be 
+a bug (or perhaps an intrinsic limitation) in the current implementation.
+Investigations are proceeding.
+
+For the time being, you need to make sure that grammar rules don't appear
+inside a positive lookahead.
+
+=item *
+
+Fully qualified subrule calls are I<not> (yet) polymorphically
+dispatched. At present you must specify the name of the exact ancestor
+grammar whose rule you want to use. This limitation will be removed in a
+future release.
+
+
 =back
 
 =head1 DIAGNOSTICS
@@ -3593,7 +4081,7 @@ within a regex) none of the following diagnostics actually throws an
 exception.
 
 Instead, these messages are simply written to the specified parser logfile
-(or to *STDERR, if no logfile is specified).
+(or to C<*STDERR>, if no logfile is specified).
 
 However, any fatal match-time message will immediately terminate the
 parser matching and will still set C<$@> (as if an exception had been
@@ -3636,6 +4124,50 @@ See the preceding diagnostic for remedies.
 
 This diagnostic should throw an exception, but can't. So it sets C<$@>
 instead, allowing you to trap the error manually if you wish.
+
+
+=item C<< Can't match against <grammar: %s> >>
+
+The regex you attempted to match against defined a pure grammar, using
+the C<< <grammar:...> >> directive. Pure grammars have no start-pattern
+and hence cannot be matched against directly.
+
+You need to define a matchable grammar that inherits from your pure
+grammar and then calls one of its rules. For example, instead of:
+
+    my $greeting = qr{
+        <grammar: Greeting>
+        
+        <rule: greet>
+            Hi there
+            | Hello
+            | Yo!
+    }xms;
+
+you need:
+
+    qr{
+        <grammar: Greeting>
+        
+        <rule: greet>
+            Hi there
+          | Hello
+          | Yo!
+    }xms;
+
+    my $greeting = qr{
+        <extends: Greeting>
+        <greet>
+    }xms;
+    
+
+=item C<< Multiple definitions for <%s> >>
+
+You defined two or more rules or tokens with the same name.
+The first one defined will be used, the rest will be ignored.
+
+To get rid of the warning, get rid of the extra definitions
+(or, at least, comment them out).
 
 
 =item C<< Possible invalid subrule call %s >>
