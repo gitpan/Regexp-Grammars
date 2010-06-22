@@ -20,6 +20,7 @@ my $calculator = do{
 
         <objrule: Term>
                <MATCH=Literal>
+          | <Sign=([+-]?)> \( <Answer> \)
           | \( <MATCH=Answer> \)
 
         <objtoken: Literal>
@@ -70,7 +71,8 @@ sub Pow::eval {
 sub Term::eval {
     my ($self) = @_;
 
-    return $self->{""}->eval();
+    return $self->{Sign} eq '-' ? -$self->{Answer}->eval()
+                                :  $self->{Answer}->eval();
 }
 
 sub Literal::eval {

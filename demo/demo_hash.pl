@@ -12,6 +12,7 @@ my $grammar = do {
     use Regexp::Grammars;
     qr{
         <[_WORD=%hash]>+
+
         <defns=(?{  [@hash{ @{$MATCH{_WORD}} }]  })>
     }xms;
 };

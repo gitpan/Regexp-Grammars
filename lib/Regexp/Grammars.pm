@@ -1,6 +1,4 @@
-#! /opt/local/bin/perl5.10.0
 package Regexp::Grammars;
-
 
 use warnings;
 use strict;
@@ -9,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.002';
+our $VERSION = '1.005';
 
 # Load the module...
 sub import {
@@ -45,6 +43,18 @@ sub _module_is_active {
     return (caller 1)[10]->{'Regexp::Grammars::active'};
 }
 
+my $RULE_HANDLER;
+sub clear_rule_handler { undef $RULE_HANDLER; }
+
+{
+    package Regexp;
+
+    sub with_actions {
+        my ($self, $handler) = @_;
+        $RULE_HANDLER = $handler;
+        return $self;
+    }
+}
 
 #=====[ COMPILE-TIME INTERIM REPRESENTATION OF GRAMMARS ]===================
 {
@@ -100,6 +110,26 @@ $DEBUG_LEVEL{s} = $DEBUG_LEVEL{step};     # Not "same"
 # Width of leading context field in debugging messages is constrained...
 my $MAX_CONTEXT_WIDTH = 20;
 my $MIN_CONTEXT_WIDTH = 6;
+
+sub set_context_width {
+    { package Regexp::Grammars::ContextRestorer;
+      sub new {
+        my ($class, $old_context_width) = @_;
+        bless \$old_context_width, $class;
+      }
+      sub DESTROY {
+        my ($old_context_width_ref) = @_;
+        $MAX_CONTEXT_WIDTH = ${$old_context_width_ref};
+      }
+    }
+
+    my ($new_context_width) = @_;
+    my $old_context_width = $MAX_CONTEXT_WIDTH;
+    $MAX_CONTEXT_WIDTH = $new_context_width;
+    if (defined wantarray) {
+        return Regexp::Grammars::ContextRestorer->new($old_context_width);
+    }
+}
 
 # Rewrite a string currently being matched, to make \n and \t visible
 sub _show_metas {
@@ -162,7 +192,7 @@ sub _debug_context {
     my ($fill_chars) = @_;
 
     # Determine minimal sufficient width for context field...
-    my $field_width = length(_show_metas($_));
+    my $field_width = length(_show_metas($_//q{}));
     if ($field_width > $MAX_CONTEXT_WIDTH) {
         $field_width = $MAX_CONTEXT_WIDTH;
     }
@@ -172,7 +202,7 @@ sub _debug_context {
 
     # Get current matching position (and some additional trailing context)...
     my $context_str
-        = substr(_show_metas(substr($_//q{},pos(),$field_width)),0,$field_width);
+        = substr(_show_metas(substr(($_//q{}).q{},pos(),$field_width)),0,$field_width);
 
     # Build the context string, handling special cases...
     our $last_context_str;
@@ -184,7 +214,7 @@ sub _debug_context {
                                 ;
         $context_str = $fill_chars x ($field_width-1) . $last_fill_char;
     }
-    else { 
+    else {
         # Make end-of-string visible in empty context string...
         if ($context_str eq q{}) {
             $context_str = '[eos]';
@@ -243,7 +273,7 @@ sub _debug_interact {
     # Only interact with terminals, and if debug level is appropriate...
     if (-t *Regexp::Grammars::LOGFILE
     && defined $DEBUG
-    && ($DEBUG_LEVEL{$DEBUG}//0) >= $DEBUG_LEVEL{$min_debug_level}) { 
+    && ($DEBUG_LEVEL{$DEBUG}//0) >= $DEBUG_LEVEL{$min_debug_level}) {
         local $/ = "\n";  # ...in case some caller is being clever
         INPUT:
         while (1) {
@@ -271,7 +301,7 @@ sub _debug_interact {
         print {*Regexp::Grammars::LOGFILE} "\n";
     }
 }
- 
+
 # Handle reporting of unsuccessful match attempts...
 sub _debug_handle_failures {
     my ($stack_height, $subrule, $in_match) = @_;
@@ -284,7 +314,7 @@ sub _debug_handle_failures {
         my $error_ref = pop @try_stack;
 
         # If attempt was the one whose match is being reported, go and report...
-        last CLEANUP if $in_match 
+        last CLEANUP if $in_match
                      && $error_ref->{height} == $stack_height
                      && $error_ref->{subrule} eq $subrule;
 
@@ -297,7 +327,7 @@ sub _debug_handle_failures {
 sub _debug_fatal {
     my ($naughty_construct) = @_;
 
-    print {*Regexp::Grammars::LOGFILE} 
+    print {*Regexp::Grammars::LOGFILE}
         "_________________________________________________________________\n",
         "Fatal error: Entire parse terminated prematurely while attempting\n",
         "             to call non-existent rule: $naughty_construct\n",
@@ -311,7 +341,7 @@ sub _debug_logmsg {
 
     # Determine indent for messages...
     my $leader = _debug_context() . q{|   } x ($stack_height-1) . '|';
-       
+
     # Report the attempt...
     print {*Regexp::Grammars::LOGFILE} map { "$leader$_\n" } @msg;
 }
@@ -325,7 +355,7 @@ sub _debug_trying {
 
     # Determine indent for messages...
     my $leader = _debug_context() . q{|   } x ($stack_height-2);
-       
+
     # Detect and report any backtracking prior to this attempt...
     our $last_try_pos;  #...Stores the pos() of the most recent match attempt?
     my $backtrack_distance = $last_try_pos - pos();
@@ -389,7 +419,7 @@ sub _debug_matched {
     $last_try_pos = pos();
 
     # Print match message...
-    print {*Regexp::Grammars::LOGFILE} $leader . $message . $text . qq{'\t}; 
+    print {*Regexp::Grammars::LOGFILE} $leader . $message . $text . qq{'\t};
 
     # Check for user interaction...
     _debug_interact($stack_height, $leader, $curr_frame_ref,
@@ -446,7 +476,7 @@ sub _debug_executed {
     $value = join "\n$leader$filler", split "\n", $value;
 
     # Report the action...
-    print {*Regexp::Grammars::LOGFILE} $leader . $message . $value . qq{'\t}; 
+    print {*Regexp::Grammars::LOGFILE} $leader . $message . $value . qq{'\t};
 
     # Check for user interaction...
     _debug_interact($stack_height, $leader, $curr_frame_ref, 'match');
@@ -512,7 +542,7 @@ sub _extend_current_result_frame_with_list {
         ],
     };
 
-    # Make the copy into an object, if the original was one... 
+    # Make the copy into an object, if the original was one...
     if (my $class = blessed($stack_ref->[-1])) {
         bless $cloned_result_frame, $class;
     }
@@ -523,7 +553,7 @@ sub _extend_current_result_frame_with_list {
 # Pop current result frame and add it to a clone of previous result frame
 # (flattening it if possible, and preserving any blessing)...
 sub _pop_current_result_frame {
-    my ($stack_ref, $key, $value) = @_;
+    my ($stack_ref, $key, $original_name, $value) = @_;
 
     # Where are we in the stack?
     my $curr_frame   = $stack_ref->[-1];
@@ -536,19 +566,32 @@ sub _pop_current_result_frame {
     # Remove "private" captures (i.e. those starting with _)...
     delete @{$curr_frame}{grep {substr($_,0,1) eq '_'} keys %{$curr_frame} };
 
+    # Build a clone of the current frame...
+    my $cloned_result_frame
+        = exists $curr_frame->{'='}                                  ? $curr_frame->{'='}
+        : $is_blessed_curr || length(join(q{}, keys %{$curr_frame})) ? { q{} => $value, %{$curr_frame} }
+        : keys %{$curr_frame}                                        ? $curr_frame->{q{}}
+        :                                                              $value
+        ;
+
+    # Apply any appropriate handler...
+    if ($RULE_HANDLER) {
+        if ($RULE_HANDLER->can($original_name) || $RULE_HANDLER->can('AUTOLOAD')) {
+            my $replacement_result_frame
+                = $RULE_HANDLER->$original_name($cloned_result_frame);
+            if (defined $replacement_result_frame) {
+                $cloned_result_frame = $replacement_result_frame;
+            }
+        }
+    }
+
     # Nest a clone of current frame inside a clone of the caller frame...
     my $cloned_caller_frame = {
         %{$caller_frame},
-        $key => exists $curr_frame->{'='}
-                    ? $curr_frame->{'='}
-                    : $is_blessed_curr || length(join(q{}, keys %{$curr_frame}))
-                        ? { q{} => $value, %{$curr_frame} }
-                        : keys %{$curr_frame}
-                            ? $curr_frame->{q{}}
-                            : $value
+        $key => $cloned_result_frame,
     };
 
-    # Make the copies into objects, if the originals were... 
+    # Make the copies into objects, if the originals were...
     if ($is_blessed_curr && !exists $curr_frame->{'='} ) {
         bless $cloned_caller_frame->{$key}, $is_blessed_curr;
     }
@@ -563,7 +606,7 @@ sub _pop_current_result_frame {
 # (flattening it if possible, and preserving any blessing)
 # (As above, but preserving listiness of key being added to)...
 sub _pop_current_result_frame_with_list {
-    my ($stack_ref, $key, $value) = @_;
+    my ($stack_ref, $key, $original_name, $value) = @_;
 
     # Where are we in the stack?
     my $curr_frame   = $stack_ref->[-1];
@@ -576,25 +619,35 @@ sub _pop_current_result_frame_with_list {
     # Remove "private" captures (i.e. those starting with _)...
     delete @{$curr_frame}{grep {substr($_,0,1) eq '_'} keys %{$curr_frame} };
 
+    # Clone the current frame...
+    my $cloned_result_frame
+        = exists $curr_frame->{'='}                                  ? $curr_frame->{'='}
+        : $is_blessed_curr || length(join(q{}, keys %{$curr_frame})) ? { q{} => $value, %{$curr_frame} }
+        : keys %{$curr_frame}                                        ? $curr_frame->{q{}}
+        :                                                              $value
+        ;
+
+    # Apply any appropriate handler...
+    if ($RULE_HANDLER) {
+        if ($RULE_HANDLER->can($original_name) || $RULE_HANDLER->can('AUTOLOAD')) {
+            my $replacement_result_frame
+                = $RULE_HANDLER->$original_name($cloned_result_frame);
+            if (defined $replacement_result_frame) {
+                $cloned_result_frame = $replacement_result_frame;
+            }
+        }
+    }
+
     # Append a clone of current frame inside a clone of the caller frame...
     my $cloned_caller_frame = {
             %{$caller_frame},
             $key => [
                 @{$caller_frame->{$key}//[]},
-                exists $curr_frame->{'='}
-                    ? $curr_frame->{'='}
-                    : $is_blessed_curr || length(join(q{}, keys %{$curr_frame}))
-                        ? {
-                                q{} => $value,
-                                %{$curr_frame}
-                        }
-                        : keys %{$curr_frame}
-                            ? $curr_frame->{q{}}
-                            : $value
+                $cloned_result_frame,
             ],
         };
 
-    # Make the copies into objects, if the originals were... 
+    # Make the copies into objects, if the originals were...
     if ($is_blessed_curr && !exists $curr_frame->{'='} ) {
         bless $cloned_caller_frame->{$key}[-1], $is_blessed_curr;
     }
@@ -627,9 +680,17 @@ my $EPILOGUE = q{
          delete @{$Regexp::Grammars::match_frame}{
                     grep {substr($_,0,1) eq '_'} keys %{$Regexp::Grammars::match_frame}
                 };
-         if (@Regexp::Grammars::RESULT_STACK) {
-            $Regexp::Grammars::RESULT_STACK[-1]{'(?R)'} = $Regexp::Grammars::match_frame;
+         if (exists $Regexp::Grammars::match_frame->{'='}) {
+            if (ref($Regexp::Grammars::match_frame->{'='}) eq 'HASH') {
+                $Regexp::Grammars::match_frame
+                    = $Regexp::Grammars::match_frame->{'='};
+            }
          }
+         if (@Regexp::Grammars::RESULT_STACK) {
+            $Regexp::Grammars::RESULT_STACK[-1]{'(?R)'}
+                = $Regexp::Grammars::match_frame;
+         }
+         Regexp::Grammars::clear_rule_handler();
          */ = $Regexp::Grammars::match_frame;
     })(?(DEFINE)
         (?<ws>(?:\\s*))
@@ -654,6 +715,72 @@ my $PARENS = qr{
     )
 }xms;
 
+
+#=====[ UTILITY SUBS FOR ERROR AND WARNING MESSAGES ]========
+
+sub _uniq {
+    my %seen;
+    return grep { !$seen{$_}++ } @_;
+}
+
+# Default translator for error messages...
+my $ERRORMSG_TRANSLATOR = sub {
+    my ($errormsg, $rulename, $context) = @_;
+
+    $rulename   = 'valid input' if $rulename eq q{};
+    $context  //= '<end of string>';
+
+    # Unimplemented subrule when rulename starts with '-'...
+    if (substr($rulename,0,1) eq '-') {
+        $rulename = substr($rulename,1);
+        return "Can't match subrule <$rulename> (not implemented)";
+    }
+
+    # Empty message converts to a "Expected...but found..." message...
+    if ($errormsg eq q{}) {
+        $rulename =~ tr/_/ /;
+        $rulename = lc($rulename);
+        return "Expected $rulename, but found '$context' instead";
+    }
+
+    # "Expecting..." messages get "but found" added...
+    if (lc(substr($errormsg,0,6)) eq 'expect') {
+        return "$errormsg, but found '$context' instead";
+    }
+
+    # Everything else stays "as is"...
+    return $errormsg;
+};
+
+# Allow user to set translation...
+sub set_error_translator {
+    { package Regexp::Grammars::TranslatorRestorer;
+      sub new {
+        my ($class, $old_translator) = @_;
+        bless \$old_translator, $class;
+      }
+      sub DESTROY {
+        my ($old_translator_ref) = @_;
+        $ERRORMSG_TRANSLATOR = ${$old_translator_ref};
+      }
+    }
+
+    my ($translator_ref) = @_;
+    die "Usage: set_error_translator(\$subroutine_reference)\n"
+        if ref($translator_ref) ne 'CODE';
+
+    my $old_translator_ref = $ERRORMSG_TRANSLATOR;
+    $ERRORMSG_TRANSLATOR = $translator_ref;
+
+    return defined wantarray
+        ? Regexp::Grammars::TranslatorRestorer->new($old_translator_ref)
+        : ();
+}
+
+# Dispatch to current translator for error messages...
+sub _translate_errormsg {
+    goto &{$ERRORMSG_TRANSLATOR};
+}
 
 #=====[ SUPPORT FOR TRANSLATING GRAMMAR-ENHANCED REGEX TO NATIVE REGEX ]====
 
@@ -741,9 +868,37 @@ sub _translate_require_directive {
     };
 }
 
+
+# Report and convert a <minimize:> directive...
+sub _translate_minimize_directive {
+    my ($construct, $debug_build) = @_;
+
+    # Report how directive was interpreted, if requested to...
+    if ($debug_build) {
+        _debug_notify( info =>
+            "   |",
+            "   |...Treating $construct as:",
+            "   |       \\ Minimize result value if possible",
+        );
+    }
+
+    return q{(?{;
+        if (2 == keys %MATCH) { # 2 because of the "!" key
+            local %Regexp::Grammars::matches = %MATCH;
+            delete $Regexp::Grammars::matches{'!'};
+            local ($Regexp::Grammars::only_key) = keys %Regexp::Grammars::matches;
+            local $Regexp::Grammars::array_ref  = $MATCH{$Regexp::Grammars::only_key};
+            if (ref($Regexp::Grammars::array_ref) eq 'ARRAY' && 1 == @{$Regexp::Grammars::array_ref}) {
+                $MATCH = $Regexp::Grammars::array_ref->[0];
+            }
+        }
+    })};
+}
+
 # Report and convert a debugging directive...
 sub _translate_error_directive {
-    my ($construct, $type, $msg, $debug_build) = @_;
+    my ($construct, $type, $msg, $debug_build, $subrule_name) = @_;
+    $subrule_name //= 'undef';
 
     # Determine severity...
     my $severity = ($type eq 'error') ? 'fatal' : 'non-fatal';
@@ -751,11 +906,6 @@ sub _translate_error_directive {
     # Unpack message...
     if (substr($msg,0,3) eq '(?{') {
         $msg = 'do'. substr($msg,2,-1);
-    }
-    elsif ($type ne 'log'
-    &&     (lc(substr($msg,0,9) ) eq 'expected '
-    ||      lc(substr($msg,0,10)) eq 'expecting ')) {
-        $msg = qq{q{$msg, but found '}.\$CONTEXT.q{' instead}};
     }
     else {
         $msg = quotemeta $msg;
@@ -780,14 +930,18 @@ sub _translate_error_directive {
 
         : qq{(?:(?{;local \$Regexp::Grammar::_memopos=pos();})
               (?>\\s*+((?-s).{0,$MAX_CONTEXT_WIDTH}+))
-              (?{; pos() = \$Regexp::Grammar::_memopos; push @!, $msg }) (?!)|}
+              (?{; pos() = \$Regexp::Grammar::_memopos;
+              @! = Regexp::Grammars::_uniq(
+                @!,
+                Regexp::Grammars::_translate_errormsg($msg,q{$subrule_name},\$CONTEXT)
+              ) }) (?!)|}
         . ($severity eq 'fatal' ? q{(?!)} : q{})
         . q{)}
         ;
 }
 
 sub _translate_subpattern {
-    my ($construct, $alias, $subpattern, $savemode, $postmodifier, $debug_build, $debug_runtime)
+    my ($construct, $alias, $subpattern, $savemode, $postmodifier, $debug_build, $debug_runtime, $backref)
         = @_;
 
     # Determine save behaviour...
@@ -798,7 +952,9 @@ sub _translate_subpattern {
     my $value_saved       = $is_codeblock  ? '$^R'                    : '$^N';
     my $do_something_with = $is_codeblock  ? 'execute the code block' : 'match the pattern';
     my $result            = $is_codeblock  ? 'result'                 : 'matched substring';
-    my $description       = $is_codeblock  ? substr($subpattern,2,-1) : $subpattern;
+    my $description       = $is_codeblock    ? substr($subpattern,2,-1)
+                          : defined $backref ? $backref
+                          :                    $subpattern;
     my $debug_construct
         = $is_codeblock ?  '<' . substr($alias,1,-1) . '= (?{;' . substr($subpattern,3,-2) . '})>'
         :                  $construct
@@ -817,7 +973,7 @@ sub _translate_subpattern {
                                  "   |...Treating $construct as:",
                                  "   |      |  $do_something_with $description $repeatedly",
             ( $is_noncapturing ? "   |       \\ but don't save $results"
-            : $is_listifying   ? "   |       \\ appending $results to \$MATCH{$alias}"
+            : $is_listifying   ? "   |       \\ appending $results to \@{\$MATCH{$alias}}"
             :                    "   |       \\ saving $results in \$MATCH{$alias}"
             )
         );
@@ -846,8 +1002,16 @@ sub _translate_subpattern {
 
 
 sub _translate_hashmatch {
-    my ($construct, $alias, $hashname, $savemode, $postmodifier, $debug_build, $debug_runtime)
+    my ($construct, $alias, $hashname, $keypat, $savemode, $postmodifier, $debug_build, $debug_runtime)
         = @_;
+
+    # Empty or missing keypattern defaults to <.hk>...
+    if (!defined $keypat || $keypat !~ /\S/) {
+        $keypat = '(?&hk)'
+    }
+    else {
+        $keypat = substr($keypat, 1, -1);
+    }
 
     # Determine save behaviour...
     my $is_noncapturing   = $savemode eq 'noncapturing';
@@ -893,7 +1057,7 @@ sub _translate_hashmatch {
     # Translate to standard regex code...
     return qq{(?:(?{;local \@Regexp::Grammars::RESULT_STACK
                     = \@Regexp::Grammars::RESULT_STACK;$debug_pre})
-                (?:((?&hk))(??{exists $hash_lookup ? q{} : q{(?!)}})(?{;$post_action$debug_post})))$postmodifier};
+                (?:($keypat)(??{exists $hash_lookup ? q{} : q{(?!)}})(?{;$post_action$debug_post})))$postmodifier};
 }
 
 
@@ -929,6 +1093,8 @@ sub _translate_subrule_call {
     # Transform qualified subrule names...
     my $internal_subrule = $subrule;
     $internal_subrule =~ s{::}{_88_}gxms;
+    my $simple_subrule = $subrule;
+    $simple_subrule =~ s{.*::}{}xms;
 
     # Shortcircuit if unknown subrule invoked...
     if (!$valid_subrule_names_ref->{$subrule}) {
@@ -945,22 +1111,22 @@ sub _translate_subrule_call {
     my $is_noncapturing = $savemode eq 'noncapturing';
     my $is_listifying   = $savemode eq 'list';
 
-    my $save_code = 
+    my $save_code =
        $is_noncapturing?
           q{ @Regexp::Grammars::RESULT_STACK[0..@Regexp::Grammars::RESULT_STACK-2] }
      : $is_listifying?
          qq{ \@Regexp::Grammars::RESULT_STACK[0..\@Regexp::Grammars::RESULT_STACK-3],
               Regexp::Grammars::_pop_current_result_frame_with_list(
-                  \\\@Regexp::Grammars::RESULT_STACK, $alias, \$^N
+                  \\\@Regexp::Grammars::RESULT_STACK, $alias, '$simple_subrule', \$^N
               ),
          }
      :
          qq{ \@Regexp::Grammars::RESULT_STACK[0..\@Regexp::Grammars::RESULT_STACK-3],
               Regexp::Grammars::_pop_current_result_frame(
-                   \\\@Regexp::Grammars::RESULT_STACK, $alias, \$^N
+                   \\\@Regexp::Grammars::RESULT_STACK, $alias, '$simple_subrule', \$^N
               ),
         }
-     ; 
+     ;
 
     # Report how construct was interpreted, if requested to...
     my $repeatedly = $REPETITION_DESCRIPTION_FOR{$postmodifier} // q{};
@@ -1020,13 +1186,12 @@ sub _translate_rule_def {
 
 # Locate any valid <...> sequences and replace with native regex code...
 sub _translate_subrule_calls {
-    my ($rule_name,
-        $grammar_spec,
+    my ($grammar_spec,
         $compiletime_debugging_requested,
         $runtime_debugging_requested,
         $pre_match_debug,
         $post_match_debug,
-        $expectation,
+        $rule_name,
         $subrule_names_ref,
     ) = @_;
 
@@ -1040,38 +1205,51 @@ sub _translate_subrule_calls {
       (?<construct>
         <
         (?:
-            (?<self_subrule_scalar_nocap> 
-                   \.                            \s* (?<subrule>(?&QUALIDENT))  \s*      
+            (?<self_subrule_scalar_nocap>
+                   \.                            \s* (?<subrule>(?&QUALIDENT))  \s*
             )
-          | (?<self_subrule_scalar> 
-                                                 \s* (?<subrule>(?&QUALIDENT))  \s*      
+          | (?<self_subrule_scalar>
+                                                 \s* (?<subrule>(?&QUALIDENT))  \s*
             )
-          | (?<self_subrule_list> 
+          | (?<self_subrule_list>
                    \[                            \s* (?<subrule>(?&QUALIDENT))  \s* \]
             )
-          | (?<alias_subrule_scalar>   
-                       (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&QUALIDENT))  \s*    
+          | (?<alias_subrule_scalar>
+                       (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&QUALIDENT))  \s*
             )
           | (?<alias_subrule_list>
-                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&QUALIDENT))  \s* \] 
+                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<subrule>(?&QUALIDENT))  \s* \]
             )
-          | (?<alias_parens_scalar_nocap> 
-                   \.  (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s*    
+          | (?<alias_parens_scalar_nocap>
+                   \.  (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s*
             )
-          | (?<alias_parens_scalar> 
-                       (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s*    
+          | (?<alias_parens_scalar>
+                       (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s*
             )
           | (?<alias_parens_list>
-                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s* \]  
+                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<pattern>(?&PARENCODE)|(?&PARENS)) \s* \]
             )
-          | (?<alias_hash_scalar_nocap> 
-                                                     (?<varname>(?&HASH)) \s*    
+          | (?<alias_hash_scalar_nocap>
+                                                     (?<varname>(?&HASH)) \s* (?<keypat>(?&BRACES))?  \s*
             )
-          | (?<alias_hash_scalar> 
-                       (?<alias>(?&IDENT)) \s* = \s* (?<varname>(?&HASH)) \s*    
+          | (?<alias_hash_scalar>
+                       (?<alias>(?&IDENT)) \s* = \s* (?<varname>(?&HASH)) \s* (?<keypat>(?&BRACES))?  \s*
             )
           | (?<alias_hash_list>
-                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<varname>(?&HASH)) \s* \]  
+                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<varname>(?&HASH)) \s* (?<keypat>(?&BRACES))?  \s* \]
+            )
+          | (?<backref>
+                                                 \s* (?<slash> \\ | /) (?<subrule>(?&QUALIDENT))  \s*
+            )
+          | (?<alias_backref>
+                       (?<alias>(?&IDENT)) \s* = \s* (?<slash> \\ | /) (?<subrule>(?&QUALIDENT))  \s*
+            )
+          | (?<alias_backref_list>
+                   \[  (?<alias>(?&IDENT)) \s* = \s* (?<slash> \\ | /) (?<subrule>(?&QUALIDENT))  \s* \]
+            )
+          |
+            (?<minimize_directive>
+                    minimize \s* : \s*
             )
           |
             (?<require_directive>
@@ -1089,7 +1267,7 @@ sub _translate_subrule_calls {
             )
           |
             (?<autoerror_directive>
-                    error \s*+ : \s*+ 
+                    error \s*+ : \s*+
             )
           |
             (?<error_directive>
@@ -1101,7 +1279,7 @@ sub _translate_subrule_calls {
         )
         > (?<modifier> \s* (?! \*\* ) [?+*][?+]? | )
       |
-        (?<raw_regex> 
+        (?<raw_regex>
               \s++
             | \\.
             | \(\?!
@@ -1123,7 +1301,7 @@ sub _translate_subrule_calls {
         (?<IDENT>     [^\W\d]\w*+                                                                        )
         (?<QUALIDENT> (?: [^\W\d]\w*+ :: )*  [^\W\d]\w*+                                                 )
     )
-    }{ 
+    }{
         my $curr_construct = $+{construct};
         my $alias          = ($+{alias}//'MATCH') eq 'MATCH' ? q{'='} : qq{'$+{alias}'};
 
@@ -1149,19 +1327,19 @@ sub _translate_subrule_calls {
             }
             elsif ($+{alias_hash_scalar}) {
                 _translate_hashmatch(
-                    $curr_construct, $alias, $+{varname}, 'scalar', $+{modifier},
+                    $curr_construct, $alias, $+{varname}, $+{keypat}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested, $runtime_debugging_requested
                 );
             }
             elsif ($+{alias_hash_scalar_nocap}) {
                 _translate_hashmatch(
-                    $curr_construct, $alias, $+{varname}, 'noncapturing', $+{modifier},
+                    $curr_construct, $alias, $+{varname}, $+{keypat}, 'noncapturing', $+{modifier},
                     $compiletime_debugging_requested, $runtime_debugging_requested
                 );
             }
             elsif ($+{alias_hash_list}) {
                 _translate_hashmatch(
-                    $curr_construct, $alias, $+{varname}, 'list', $+{modifier},
+                    $curr_construct, $alias, $+{varname}, $+{keypat}, 'list', $+{modifier},
                     $compiletime_debugging_requested, $runtime_debugging_requested
                 );
             }
@@ -1205,6 +1383,23 @@ sub _translate_subrule_calls {
                     $subrule_names_ref,
                 );
             }
+            elsif ($+{backref} || $+{alias_backref} || $+{alias_backref_list}) {
+                my $backref = qq{\$Regexp::Grammars::RESULT_STACK[-1]{'$+{subrule}'}};
+                my $quoter  = $+{slash} eq '\\'
+                                    ? "quotemeta($backref)"
+                                    : "Regexp::Grammars::_invert_delim($backref)"
+                                    ;
+                my $pattern = qq{ (??{ defined $backref ? $quoter : q{(?!)}})};
+                my $type = $+{backref}            ? 'noncapturing'
+                         : $+{alias_backref}      ? 'scalar'
+                         :                          'list'
+                         ;
+                _translate_subpattern(
+                    $curr_construct, $alias, $pattern, $type, $+{modifier},
+                    $compiletime_debugging_requested, $runtime_debugging_requested,
+                    "(\$MATCH{'$+{subrule}'})"
+                );
+            }
             elsif ($+{raw_regex}) {
                 _translate_raw_regex(
                     $+{raw_regex}, $compiletime_debugging_requested
@@ -1212,6 +1407,11 @@ sub _translate_subrule_calls {
             }
             elsif ($+{require_directive}) {
                 _translate_require_directive(
+                    $curr_construct, $+{condition}, $compiletime_debugging_requested
+                );
+            }
+            elsif ($+{minimize_directive}) {
+                _translate_minimize_directive(
                     $curr_construct, $+{condition}, $compiletime_debugging_requested
                 );
             }
@@ -1223,21 +1423,21 @@ sub _translate_subrule_calls {
             elsif ($+{error_directive}) {
                 _translate_error_directive(
                     $curr_construct, $+{error_type}, $+{msg},
-                    $compiletime_debugging_requested
+                    $compiletime_debugging_requested, $rule_name
                 );
             }
             elsif ($+{autoerror_directive}) {
                 _translate_error_directive(
-                    $curr_construct, 'error', "Expected $expectation",
-                    $compiletime_debugging_requested
+                    $curr_construct, 'error', q{},
+                    $compiletime_debugging_requested, $rule_name
                 );
             }
             elsif ($+{yadaerror_directive}) {
                 _translate_error_directive(
                     $curr_construct,
                     ($+{yadaerror_directive} eq '???' ?  'warning' : 'error'),
-                    "Cannot match $rule_name (not implemented)",
-                    $compiletime_debugging_requested
+                    q{},
+                    $compiletime_debugging_requested, -$rule_name
                 );
             }
             else {
@@ -1275,7 +1475,7 @@ sub _translate_subrule_calls {
         q{$CONTEXT} => q{$^N},
         q{$DEBUG}   => q{$Regexp::Grammars::DEBUG},
         q{$INDEX}   => q{${\\pos()}},
-        q{%MATCH}   => q{$Regexp::Grammars::RESULT_STACK[-1]},
+        q{%MATCH}   => q{%{$Regexp::Grammars::RESULT_STACK[-1]}},
     };
     state $translatable_scalar
         = join '|', map {quotemeta $_}
@@ -1336,6 +1536,13 @@ sub _open_log {
         _debug_notify( q{} => q{} );
         return *STDERR{IO};
     }
+}
+
+sub _invert_delim {
+    my ($delim) = @_;
+    $delim = reverse $delim;
+    $delim =~ tr/<>[]{}()«»`'/><][}{)(»«'`/;
+    return quotemeta $delim;
 }
 
 # Regex to detect if other regexes contain a grammar specification...
@@ -1566,7 +1773,11 @@ sub _build_grammar {
         }
 
         # Remove the grammar directive...
-        $main_regex =~ s{ $GRAMMAR_DIRECTIVE | [#] [^\n]+ }{}gxms;
+        $main_regex =~ s{
+            $GRAMMAR_DIRECTIVE
+          | < debug: \s* (run | match | step | try | on | off | same ) \s* >
+          | [#] [^\n]+
+        }{}gxms;
 
         # Check for anything else in the main regex...
         if ($main_regex =~ /\S/) {
@@ -1579,7 +1790,7 @@ sub _build_grammar {
         }
 
         # Remember set of valid subrule names...
-        $subrule_names_for{$grammar_name} 
+        $subrule_names_for{$grammar_name}
             = {
                 map { ($_ => 1,  $grammar_name.'::'.$_ => 1 ) }
                   keys %subrule_names
@@ -1595,13 +1806,12 @@ sub _build_grammar {
 
         # Any actual regex is processed first...
         $regex = _translate_subrule_calls(
-            "main pattern to match",
             $main_regex,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
             $pre_match_debug,
             $post_match_debug,
-            'valid input',         # Expected...what?
+            q{},                        # Expected...what?
             \%subrule_names,
         );
 
@@ -1636,13 +1846,12 @@ sub _build_grammar {
 
         # Translate any nested <...> constructs...
         $body = _translate_subrule_calls(
-            "<$type: $callname>",
             $body,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
             $pre_match_debug,
             $post_match_debug,
-            lc($callname),                # Expected...what?
+            $callname,                # Expected...what?
             \%subrule_names,
         );
 
@@ -1672,9 +1881,9 @@ sub _build_grammar {
 
     # Insert checkpoints into any user-defined code block...
     $regex =~ s{ \( \?\?? \{ \K (?!;) }{
-        local \@Regexp::Grammars::RESULT_STACK = \@Regexp::Grammars::RESULT_STACK; 
+        local \@Regexp::Grammars::RESULT_STACK = \@Regexp::Grammars::RESULT_STACK;
     }xmsg;
-    
+
     # Check for any suspicious left-overs from the start of the regex...
     pos $regex = 0;
 
@@ -1726,7 +1935,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.002
+This document describes Regexp::Grammars version 1.005
 
 
 =head1 SYNOPSIS
@@ -1747,7 +1956,7 @@ This document describes Regexp::Grammars version 1.002
                                      (saved under the key 'Noun')
                 <[PostNoun=ws]>  # Parse whitespace, save it in a list
                                  #   (saved under the key 'PostNoun')
-            )+                   
+            )+
 
             <Verb>               # Parse a Verb and save result in a scalar
                                      (saved under the key 'Verb')
@@ -1768,12 +1977,12 @@ This document describes Regexp::Grammars version 1.002
 
         <token: File>              # Define a subrule named File
             <.ws>                  #  - Parse but don't capture whitespace
-            <MATCH= ([\w-]+) >     #  - Parse the subpattern and capture 
+            <MATCH= ([\w-]+) >     #  - Parse the subpattern and capture
                                    #    matched text as the result of the
                                    #    subrule
 
         <token: Noun>              # Define a subrule named Noun
-            cat | dog | fish       #  - Match an alternative (as usual) 
+            cat | dog | fish       #  - Match an alternative (as usual)
 
         <rule: Verb>               # Define a whitespace-sensitive subrule
             eats                   #  - Match a literal (after any space)
@@ -1827,6 +2036,10 @@ This document describes Regexp::Grammars version 1.002
                              save result to $MATCH{RULENAME}
 
     <%HASH>                  Match longest possible key of hash
+    <%HASH {PAT}>            Match any key of hash that also matches PAT
+
+    <\IDENT>                 Match the literal contents of $MATCH{IDENT}
+    </IDENT>                 Match closing delimiter for $MATCH{IDENT}
 
     <ALIAS= RULENAME>        Call subrule, save result in $MATCH{ALIAS}
     <ALIAS= %HASH>           Match a hash key, save in $MATCH{ALIAS}
@@ -1851,13 +2064,14 @@ This document describes Regexp::Grammars version 1.002
     $MATCH      Magic override value (returned instead of result-hash)
     $DEBUG      Current match-time debugging mode
 
-=head2 Debugging support...
+=head2 Directives...
 
     <require: (?{ CODE })>   Fail if code evaluates false
     <debug: COMMAND >        Change match-time debugging mode
     <error: TEXT|CODEBLOCK>  Queue text or value as an error message
     <logfile: LOGFILE>       Change debugging log file (default: STDERR)
     <log: (?{ CODE })  >     Explicitly add a message to the log
+    <minimize:>              Simplify the result of a subrule match
 
 
 
@@ -1929,7 +2143,7 @@ For example, the above LaTeX matcher could be converted to a full LaTeX parser
         <rule: Command>    \\  <Literal>  <Options>?  <Args>?
 
         <rule: Options>    \[  <[Option]> ** (,)  \]
-        
+
         <rule: Args>       \{  <[Element]>*  \}
 
         <rule: Option>     [^][\$&%#_{}~^\s,]+
@@ -2002,7 +2216,7 @@ L<Subrule results>):
         }
     }
 
-The data structure that Regexp::Grammars produces from a regex match 
+The data structure that Regexp::Grammars produces from a regex match
 is available to the surrounding program in the magic variable C<%/>.
 
 Regexp::Grammars provides many features that simplify the extraction of
@@ -2015,7 +2229,7 @@ parsing techniques they support.
 =head2 Setting up the module
 
 Just add:
-    
+
     use Regexp::Grammars;
 
 to any lexical scope. Any regexes within that scope will automatically now
@@ -2036,7 +2250,7 @@ extended regexes, in the usual manner (i.e. via a C<=~> match):
     if ($input_text =~ $parser) {
         ...
     }
-    
+
 After a successful match, the variable C<%/> will contain a series of
 nested hashes representing the structured hierarchical data captured
 during the parse.
@@ -2057,7 +2271,7 @@ For example:
         <paren_pair> | <brace_pair>
 
         # Rule definition...
-        <rule: paren_pair> 
+        <rule: paren_pair>
             \(  (?: <escape> | <paren_pair> | <brace_pair> | [^()] )*  \)
 
         # Rule definition...
@@ -2066,7 +2280,7 @@ For example:
 
         # Token definition...
         <token: escape>
-            \\ . 
+            \\ .
     }xms;
 
 The start-pattern at the beginning of the grammar acts like the
@@ -2098,10 +2312,10 @@ You can explicitly define a C<< <ws> >> token to change that default
 behaviour. For example, you could alter the definition of "whitespace" to
 include Perlish comments, by adding an explicit C<< <token: ws> >>:
 
-    <token: ws> 
+    <token: ws>
         (?: \s+ | #[^\n]* )*
 
-But be careful not to define C<< <ws> >> as a rule, as this will lead to 
+But be careful not to define C<< <ws> >> as a rule, as this will lead to
 all kinds of infinitely recursive unpleasantness.
 
 
@@ -2111,7 +2325,7 @@ To invoke a rule to match at any point, just enclose the rule's name in angle
 brackets (like in Perl 6). There must be no space between the opening bracket
 and the rulename. For example::
 
-    qr{ 
+    qr{
         file:             # Match literal sequence 'f' 'i' 'l' 'e' ':'
         <name>            # Call <rule: name>
         <options>?        # Call <rule: options> (it's okay if it fails)
@@ -2123,9 +2337,9 @@ and the rulename. For example::
 If you need to match a literal pattern that would otherwise look like a
 subrule call, just backslash-escape the leading angle:
 
-    qr{ 
+    qr{
         file:             # Match literal sequence 'f' 'i' 'l' 'e' ':'
-        \<name>           # Match literal sequence '<' 'n' 'a' 'm' 'e' '>' 
+        \<name>           # Match literal sequence '<' 'n' 'a' 'm' 'e' '>'
         <options>?        # Call <rule: options> (it's okay if it fails)
 
         <rule: name>
@@ -2317,7 +2531,7 @@ calls, if the same subrule is invoked in several places in a grammar. For
 example if a cmdline option could be given either one or two values, you
 might parse it:
 
-    <rule: size_option>   
+    <rule: size_option>
         -size <[size]> (?: x <[size]> )?
 
 The result-hash entry for C<'size'> would then always contain an array,
@@ -2327,7 +2541,7 @@ Listifying subrules can also be given L<aliases|"Renaming subrule results">,
 just like ordinary subrules. The alias is always specified inside the square
 brackets:
 
-    <rule: size_option>   
+    <rule: size_option>
         -size <[size=pos_integer]> (?: x <[size=pos_integer]> )?
 
 Here, the sizes are parsed using the C<pos_integer> rule, but saved in the
@@ -2336,7 +2550,7 @@ result-hash in an array under the key C<'size'>.
 
 =head2 Pseudo-subrules
 
-Aliases can also be given to standard Perl subpatterns, as well as to 
+Aliases can also be given to standard Perl subpatterns, as well as to
 code blocks within a regex. The syntax for subpatterns is:
 
     <ALIAS= (SUBPATTERN) >
@@ -2386,10 +2600,10 @@ Using aliased code blocks, you could add an extra field to the result-
 hash to describe which form of the command was detected, like so:
 
     <rule: copy_cmd>
-        copy <from=file>        <to=file>  <type=(?{ 'std' })> 
-      | dup    <to=file>  as  <from=file>  <type=(?{ 'rev' })> 
-      |      <from=file>  ->    <to=file>  <type=(?{ 'fwd' })> 
-      |        <to=file>  <-  <from=file>  <type=(?{ 'bwd' })> 
+        copy <from=file>        <to=file>  <type=(?{ 'std' })>
+      | dup    <to=file>  as  <from=file>  <type=(?{ 'rev' })>
+      |      <from=file>  ->    <to=file>  <type=(?{ 'fwd' })>
+      |        <to=file>  <-  <from=file>  <type=(?{ 'bwd' })>
 
 Now, if the rule matched, the result-hash would contain something like:
 
@@ -2421,20 +2635,20 @@ is:
 
 For example, you may prefer to rewrite a rule such as:
 
-    <rule: paren_pair> 
+    <rule: paren_pair>
 
-        \( 
+        \(
             (?: <escape> | <paren_pair> | <brace_pair> | [^()] )*
         \)
 
 without any literal matching, like so:
 
-    <rule: paren_pair> 
+    <rule: paren_pair>
 
         <.left_paren>
             (?: <escape> | <paren_pair> | <brace_pair> | <.non_paren> )*
         <.right_paren>
-    
+
     <token: left_paren>   \(
     <token: right_paren>  \)
     <token: non_paren>    [^()]
@@ -2443,12 +2657,12 @@ Moreover, as the individual components inside the parentheses probably
 aren't being captured for any useful purpose either, you could further
 optimize that to:
 
-    <rule: paren_pair> 
+    <rule: paren_pair>
 
         <.left_paren>
             (?: <.escape> | <.paren_pair> | <.brace_pair> | <.non_paren> )*
         <.right_paren>
-    
+
 
 Note that you can also use the dot modifier on an aliased subpattern:
 
@@ -2465,7 +2679,7 @@ See L<"Debugging non-grammars"> for an example of this usage.
 
 If a rule name (or an alias) begins with an underscore:
 
-     <_RULENAME>       <_ALIAS=RULENAME>  
+     <_RULENAME>       <_ALIAS=RULENAME>
     <[_RULENAME]>     <[_ALIAS=RULENAME]>
 
 then matching proceeds as normal, and any result that is returned is
@@ -2527,7 +2741,7 @@ So, for example, you can match a sequence of numbers separated by commas with:
 
     <token: number>  \d+
     <token: comma>   \s* , \s*
-    
+
 Note that it's important to use the C<< <[...]> >> form for the items being
 matched, so that all of them are saved in the result hash. You can also save
 all the separators (if that's important):
@@ -2535,7 +2749,7 @@ all the separators (if that's important):
     <[number]> ** <[comma]>
 
 The repeated item I<must> be specified as a subrule call fo some
-kind, but the separators may be specified either as a subrule or a 
+kind, but the separators may be specified either as a subrule or a
 bracketed pattern. For example:
 
     <[number]> ** ( , )
@@ -2567,7 +2781,7 @@ alternatives between C<|> alterators:
 
     <rule: valid_word>
         a | aa | aal | aalii | aam | aardvark | aardwolf | aba | ...
-        # ...and 40,000 lines later... 
+        # ...and 40,000 lines later...
         ... | zymotize | zymotoxic | zymurgy | zythem | zythum
 
 To simplify such cases, Regexp::Grammars provides a special construct
@@ -2586,34 +2800,356 @@ Which means that the rules in the previous example could also be written:
 provided that the two hashes (C<%cmds> and C<%dict>) are visible in the scope
 where the grammar is created.
 
+Matching a hash key in this way is typically I<significantly> faster
+than matching a large set of alternations. Specifically, it is
+I<O(length of longest potential key) ^ 2>, instead of I<O(number of keys)>.
+
 Internally, the construct is converted to something equivalent to:
 
     <rule: shell_cmd>
-        (<.hk>)  <require: exists $cmds{$CAPTURE}>
+        (<.hk>)  <require: (?{ exists $cmds{$CAPTURE} })>
 
     <rule: valid_word>
-        (<.hk>)  <require: exists $dict{$CAPTURE}>
+        (<.hk>)  <require: (?{ exists $dict{$CAPTURE} })>
 
 The special C<< <hk> >> rule is created automatically, and defaults to
-C<\S+>, but you can also define it explicitly to handle other kinds of 
+C<\S+>, but you can also define it explicitly to handle other kinds of
 keys. For example:
 
     <rule: hk>
-        .+            # Key may be any number of chars on a single line
+        [^\n]+        # Key may be any number of chars on a single line
 
     <rule: hk>
         [ACGT]{10,}   # Key is a base sequence of at least 10 pairs
 
-Matching a hash key in this way is typically I<significantly> faster
-than matching a large set of alternations. Specifically, it is
-I<O(length of longest potential key) ^ 2>, instead of I<O(number of keys)>.
+Alternatively, you can specify a different key-matching pattern for
+each hash you're matching, by placing the required pattern in braces
+immediately after the hash name. For example:
+
+    <rule: client_name>
+        # Valid keys match <.hk> (default or explicitly specified)
+        <%clients>
+
+    <rule: shell_cmd>
+        # Valid keys contain only word chars, hyphen, slash, or dot...
+        <%cmds { [\w-/.]+ }>
+
+    <rule: valid_word>
+        # Valid keyss contain only alphas or internal hyphen or apostrophe...
+        <%dict{ (?i: (?:[a-z]+[-'])* [a-z]+ ) }>
+
+    <rule: DNA_sequence>
+        # Valid keys are base sequences of at least 10 pairs...
+        <%sequences{[ACGT]{10,}}>
+
+This second approach to key-matching is preferred, because it localizes
+any non-standard key-matching behaviour to each individual hash.
+
+
+=head2 Rematching subrule results
+
+Sometimes it is useful to be able to rematch a string that has previously
+been matched by some earlier subrule. For example, consider a rule to
+match shell-like control blocks:
+
+    <rule: control_block>
+          for   <expr> <[command]>+ endfor
+        | while <expr> <[command]>+ endwhile
+        | if    <expr> <[command]>+ endif
+        | with  <expr> <[command]>+ endwith
+
+This would be much tidier if we could factor out the command names
+(which are the only differences between the four alternatives). The 
+problem is that the obvious solution:
+
+    <rule: control_block>
+        <keyword> <expr>
+            <[command]>+
+        end<keyword>
+
+doesn't work, because it would also match an incorrect input like:
+
+    for 1..10 
+        echo $n
+        ls subdir/$n
+    endif
+
+We need some way to ensure that the C<< <keyword> >> matched immediately
+after "end" is the same C<< <keyword> >> that was initially matched.
+
+That's not difficult, because the first C<< <keyword> >> will have
+captured what it matched into C<$MATCH{keyword}>, so we could just
+write:
+
+    <rule: control_block>
+        <keyword> <expr>
+            <[command]>+
+        end(??{quotemeta $MATCH{keyword}})
+
+This is such a useful technique, yet so ugly, scary, and prone to error,
+that Regexp::Grammars provides a cleaner equivalent:
+
+    <rule: control_block>
+        <keyword> <expr>
+            <[command]>+
+        end<\keyword>
+
+Directives of the form C<<< <\I<IDENTIFIER>> >>> are known as
+"matchref" (an abbreviation of "%MATCH-supplied backreference").
+They always attempts to match, as a literal, the current value of
+C<<< $MATCH{I<IDENTIFIER>} >>>.
+
+By default, a matchref does not capture what it matches, but you
+can have it do so by giving it an alias:
+
+    <token: delimited_string>
+        <ldelim=str_delim>  .*?  <rdelim=\ldelim>
+
+    <token: str_delim> ["'`]
+
+At first glance this doesn't seem very useful as, by definition,
+C<$MATCH{delim}> and C<$MATCH{closing_delim}> must necessarily
+always end up with identical values. However, it can be useful 
+if the rule also has other alternatives and you want to create a
+consistent internal representation for those alternatives, like so:
+
+    <token: delimited_string>
+          <ldelim=str_delim>  .*?  <rdelim=\ldelim>
+        | <ldelim=( \[ )      .*?  <rdelim=( \] )
+        | <ldelim=( \{ )      .*?  <rdelim=( \} )
+        | <ldelim=( \( )      .*?  <rdelim=( \) )
+        | <ldelim=( \< )      .*?  <rdelim=( \> )
+
+You can also force a matchref to save repeated matches
+as a nested array, in the usual way:
+
+    <token: marked_text>
+        <marker> <text> <[endmarkers=\marker]>+
+
+Be careful though, as the following will not do as you may expect:
+
+        <[marker]>+ <text> <[endmarkers=\marker]>+
+
+because the value of C<$MATCH{marker}> will be an array reference, which
+the matchref will flatten and concatenate, then match the
+resulting string as a literal, which will mean the previous example will
+match endmarkers that are exact multiples of the complete start marker,
+rather than endmarkers that consist of any number of repetitions of the
+individual start marker delimiter. So:
+
+        ""text here""
+        ""text here""""
+        ""text here""""""
+
+but not:
+
+        ""text here"""
+        ""text here"""""
+
+Uneven start and end markers such as these are extremely unusual, so
+this problem rarely arises in practice.
+
+
+=head2 Rematching balanced delimiters
+
+Consider the example in the previous section:
+
+    <token: delimited_string>
+          <ldelim=str_delim>  .*?  <rdelim=\ldelim>
+        | <ldelim=( \[ )      .*?  <rdelim=( \] )
+        | <ldelim=( \{ )      .*?  <rdelim=( \} )
+        | <ldelim=( \( )      .*?  <rdelim=( \) )
+        | <ldelim=( \< )      .*?  <rdelim=( \> )
+
+The repeated pattern of the last four alternatives is gauling,
+but we can't just refactor those delimiters as well:
+
+    <token: delimited_string>
+          <ldelim=str_delim>  .*?  <rdelim=\ldelim>
+        | <ldelim=bracket>    .*?  <rdelim=\ldelim>
+
+because that would incorrectly match:
+
+    { delimited content here {
+
+while failing to match:
+
+    { delimited content here }
+
+To refactor balanced delimiters like those, we need a second
+kind of matchref; one that's a little smarter.
+
+Or, preferably, a lot smarter, because there are many other kinds of
+balanced delimiters, apart from single brackets. For example:
+
+      {{{ delimited content here }}}
+       /* delimited content here */
+       (* delimited content here *)
+       `` delimited content here ''
+       if delimited content here fi
+
+The common characteristic of these delimiter pairs is that the closing
+delimiter is the I<inverse> of the opening delimiter: the sequence of
+characters is reversed and certain characters (mainly brackets, but also
+single-quotes/backticks) are mirror-reflected.
+
+Regexp::Grammars supports the parsing of such delimiters with a
+construct known as and I<invertref>, which is specified using the
+C<<< </I<IDENT>> >>> directive. An invertref acts very like a
+L<matchref|"Rematching subrule results">, except that it does not
+convert to:
+
+    (??{ quotemeta( $MATCH{I<IDENT>} ) })
+
+but rather to:
+
+    (??{ quotemeta( inverse( $MATCH{I<IDENT> ))} })
+
+With this directive available, the balanced delimiters of the previous
+example can be refactored to:
+
+    <token: delimited_string>
+          <ldelim=str_delim>  .*?  <rdelim=\ldelim>
+        | <ldelim=( [[{(<] )  .*?  <rdelim=/ldelim>
+
+The various forms of this directive are:
+
+    </ident>            # Match the inverse of $MATCH{ident}
+    <ALIAS=/ident>      # Match inverse and capture to $MATCH{ident}
+    <[ALIAS=/ident]>    # Match inverse and push on @{$MATCH{ident}}
+
+The character pairs that are reversed during mirroring are: C<{> and C<}>,
+C<[> and C<]>, C<(> and C<)>, C<< <> >> and C<< > >>, C<«> and C<»>,
+C<`> and C<'>.
+
+The following mnemonics may be useful in distinguishing inverserefs from
+backrefs: a backref starts with a C<\> (just like the standard Perl
+regex backrefs C<\1> and C<\g{-2}> and C<< \k<name> >>), whereas an
+inverseref starts with a C</> (like an HTML or XML closing tag). Or
+just remember that C<< <\IDENT> >> is "match the same again", and if you
+want "the same again, only mirrored" instead, just mirror the C<\>
+to get C<< <\IDENT> >>.
+
+=head1 Autoactions
+
+The module also supports event-based parsing. You can specify a grammar
+in the usual way and then, for a particular parse, layer a collection of
+call-backs (known as "autoactions") over the grammar to handle the data
+as it is parsed.
+
+Normally, a grammar rule returns the result hash it has accumulated
+(or whatever else was aliased to C<MATCH=> within the rule). However,
+you can specify an autoaction object before the grammar is matched.
+
+Once the autoaction object is specified, every time a rule succeeds
+during the parse, its result is passed to the object via one of its
+methods; specifically it is passed to the method whose name is the same
+as the rule's.
+
+For example, suppose you had a grammar that recognizes simple algebraic
+expressions:
+
+    my $expr_parser = do{
+        use Regexp::Grammars;
+        qr{
+            <Expr>
+
+            <rule: Expr>       <[Operand=Mult]> ** <[Op=(\+|\-)]>
+
+            <rule: Mult>       <[Operand=Pow]>  ** <[Op=(\*|/|%)]>
+
+            <rule: Pow>        <[Operand=Term]> ** <Op=(\^)>
+
+            <rule: Term>          <MATCH=Literal>
+                       |       \( <MATCH=Expr> \)
+
+            <token: Literal>   <MATCH=( [+-]? \d++ (?: \. \d++ )?+ )>
+        }xms
+    };
+
+You could convert this grammar to a calculator, by installing a set of
+autoactions that convert each rule's result hash to the corresponding
+value of the sub-expression that the rule just parsed. To do that, you
+would create a class with methods whose names match the rules whose
+results you want to change. For example:
+
+    package Calculator;
+    use List::Util qw< reduce >;
+
+    sub new {
+        my ($class) = @_;
+
+        return bless {}, $class
+    }
+
+    sub Answer {
+        my ($self, $result_hash) = @_;
+
+        my $sum = shift @{$result_hash->{Operand}};
+
+        for my $term (@{$result_hash->{Operand}}) {
+            my $op = shift @{$result_hash->{Op}};
+            if ($op eq '+') { $sum += $term; }
+            else            { $sum -= $term; }
+        }
+
+        return $sum;
+    }
+
+    sub Mult {
+        my ($self, $result_hash) = @_;
+
+        return reduce { eval($a . shift(@{$result_hash->{Op}}) . $b) }
+                      @{$result_hash->{Operand}};
+    }
+
+    sub Pow {
+        my ($self, $result_hash) = @_;
+
+        return reduce { $b ** $a } reverse @{$result_hash->{Operand}};
+    }
+
+
+Objects of this class (and indeed the class itself) now have methods
+corresponding to some of the rules in the expression grammar. To
+apply those methods to the results of the rules (as they parse) you
+simply install an object as the "autoaction" handler, immediately
+before you initiate the parse:
+
+    if ($text ~= $expr_parser->with_actions(Calculator->new)) {
+        say $/{Answer};   # Now prints the result of the expression
+    }
+
+The C<with_actions()> method expects to be passed an object or
+classname. This object or class will be installed as the autoaction
+handler for the next match against any grammar. After that match, the
+handler will be uninstalled. C<with_actions()> returns the grammar it's
+called on, making it easy to call it as part of a match (which is the
+recommended idiom).
+
+With a C<Calculator> object set as the autoaction handler, whenever
+the C<Answer>, C<Mult>, or C<Pow> rule of the grammar matches, the
+corresponding C<Answer>, C<Mult>, or C<Pow> method of the
+C<Calculator> object will be called (with the rule's result value
+passed as it's only argument), and the result of the method will be
+used as the result of the rule.
+
+Note that nothing new happens when a C<Term> or C<Literal> rule matches,
+because the C<Calculator> object doesn't have methods with those names.
+
+The overall effect, then, is to allow you to specify a grammar without
+rule-specific bahaviours and then, later, specify a set of final actions
+(as methods) for some or all of the rules of the grammar.
+
+Note that, if a particular callback method returns C<undef>, the result
+of the corresponding rule will be passed through without modification.
 
 
 =head1 Named grammars
 
 All the grammars shown so far are confined to a single regex. However,
 Regexp::Grammars also provides a mechanism that allows you to defined
-named grammars, which can then be imported into other regexes. This 
+named grammars, which can then be imported into other regexes. This
 gives the a way of modularizing common grammatical components.
 
 =head2 Defining a named grammar
@@ -2676,7 +3212,7 @@ want to change. For example:
         <extends: List::Generic>
 
         # Replace Item rule from List::Generic...
-        <rule: Item>    
+        <rule: Item>
             [+-]? \d++
     }x;
 
@@ -2737,7 +3273,7 @@ and add the hex digits to its C<Digit> token:
 
         <token: Digit>
             <List::Integral::Digit>
-          | [A-Fa-f]  
+          | [A-Fa-f]
     }x;
 
 If you call a subrule using a fully qualified name (such as
@@ -2789,7 +3325,7 @@ turn would make postprocessing the result-hash (in C<%/>) far more
 complicated than it needs to be.
 
 To avoid this behaviour, if a subrule's result-hash doesn't contain any keys
-except C<"">, the module "flattens" the result-hash, by replacing it with 
+except C<"">, the module "flattens" the result-hash, by replacing it with
 the value of its single key.
 
 So, for example, the grammar:
@@ -2798,7 +3334,7 @@ So, for example, the grammar:
 
     <rule: from>   [\w/.-]+
     <rule: to>     [\w/.-]+
- 
+
 I<doesn't> return a result-hash like this:
 
     {
@@ -2825,7 +3361,7 @@ This flattening also occurs if a result-hash contains only "private" keys
 
     <rule: from>   <_dir=path>? <_file=filename>
     <rule: to>     <_dir=path>? <_file=filename>
-    
+
     <token: path>      [\w/.-]*/
     <token: filename>  [\w.-]+
 
@@ -2838,7 +3374,7 @@ Here, the C<from> rule produces a result like this:
     }
 
 which is automatically stripped of "private" keys, leaving:
-        
+
     from => {
           "" => '/usr/local/bin/perl',
     }
@@ -2846,6 +3382,42 @@ which is automatically stripped of "private" keys, leaving:
 which is then automatically flattened to:
 
     from => '/usr/local/bin/perl'
+
+
+=head3 List result distillation
+
+A special case of result distillation occurs in a separated
+list, such as:
+
+    <rule: List>
+
+        <[Item]>  **  <[Sep=(,)]>
+
+If this construct matches just a single item, the result hash will
+contain a single entry consisting of a nested array with a single
+value, like so:
+
+    { Item => [ 'data' ] }
+
+Instead of returning this annoyingly nested data structure, you can tell
+Regexp::Grammars to flatten it to just the inner data with a special
+directive:
+
+    <rule: List>
+
+        <[Item]>  **  <[Sep=(,)]>
+
+        <minimize:>
+
+The C<< <minimize:> >> directive examines the result hash (i.e.
+C<%MATCH>). If that hash contains only a single entry, which is a
+reference to an array with a single value, then the directive assigns
+that single value directly to C<$MATCH>, so that it will be returned
+instead of the usual result hash.
+
+This means that a normal separated list still results in a hash
+containing all elements and separators, but a "degenerate" list of only
+one item results in just that single item.
 
 
 =head3 Manual result distillation
@@ -2895,7 +3467,7 @@ access to the result-hash.
 The result-hash itself can be accessed as C<%MATCH> within any code block
 inside a rule. For example:
 
-    <rule: sum> 
+    <rule: sum>
         <X=product> \+ <Y=product>
             <MATCH=(?{ $MATCH{X} + $MATCH{Y} })>
 
@@ -2910,7 +3482,7 @@ It is also possible to set the rule result from within a code block (instead
 of aliasing it). The special "override" return value is represented by the
 special variable C<$MATCH>. So the previous example could be rewritten:
 
-    <rule: sum> 
+    <rule: sum>
         <X=product> \+ <Y=product>
             (?{ $MATCH = $MATCH{X} + $MATCH{Y} })
 
@@ -2920,7 +3492,7 @@ normal "return all subrule results" behaviour.
 Assigning to C<$MATCH> directly is particularly handy if the result
 may not always be "distillable", for example:
 
-    <rule: sum> 
+    <rule: sum>
         <X=product> \+ <Y=product>
             (?{ if (!ref $MATCH{X} && !ref $MATCH{Y}) {
                     # Reduce to sum, if both terms are simple scalars...
@@ -2958,7 +3530,7 @@ Some more examples of the uses of C<$MATCH>:
 
     <rule: NumList>
       # Numbers in square brackets...
-        \[ 
+        \[
             ( \d+ (?: , \d+)* )
         \]
 
@@ -3088,7 +3660,7 @@ methods:
             say "\t"x$level, "\tOptions:";
             $self->{options}->explain($level+2)
         }
-        
+
         for my $arg (@{$self->{arg}}) {
             say "\t"x$level, "\tArg:";
             $arg->explain($level+2)
@@ -3133,7 +3705,7 @@ The generic syntax for these types of rules and tokens is:
 
 For example:
 
-    <objrule: LaTeX::Element=component> 
+    <objrule: LaTeX::Element=component>
         # ...Defines a rule that can be called as <component>
         # ...and which returns a hash-based LaTeX::Element object
 
@@ -3161,7 +3733,7 @@ C<::>, if any) is used.
 
 For example:
 
-    <objrule: LaTeX::Element> 
+    <objrule: LaTeX::Element>
         # ...Defines a rule that can be called as <Element>
         # ...and which returns a hash-based LaTeX::Element object
 
@@ -3207,7 +3779,7 @@ C<< <logfile:...> >> directive it logs a series of messages explaining how it
 has interpreted the various components of that grammar. For example, the
 following grammar:
 
-    <logfile: parser_log > 
+    <logfile: parser_log >
 
     <cmd>
 
@@ -3220,11 +3792,11 @@ would produce the following analysis in the 'parser_log' file:
     info | Processing the main regex before any rule definitions
          |    |
          |    |...Treating <cmd> as:
-         |    |      |  match the subrule <cmd> 
+         |    |      |  match the subrule <cmd>
          |    |       \ saving the match in $MATCH{'cmd'}
          |    |
          |     \___End of main regex
-         | 
+         |
     info | Defining a rule: <cmd>
          |    |...Returns: a hash
          |    |
@@ -3232,22 +3804,22 @@ would produce the following analysis in the 'parser_log' file:
          |    |       \ normal Perl regex syntax
          |    |
          |    |...Treating <from=file> as:
-         |    |      |  match the subrule <file> 
+         |    |      |  match the subrule <file>
          |    |       \ saving the match in $MATCH{'from'}
          |    |
          |    |...Treating <to=file> as:
-         |    |      |  match the subrule <file> 
+         |    |      |  match the subrule <file>
          |    |       \ saving the match in $MATCH{'to'}
          |    |
          |    |...Treating ' | cp ' as:
          |    |       \ normal Perl regex syntax
          |    |
          |    |...Treating <source> as:
-         |    |      |  match the subrule <source> 
+         |    |      |  match the subrule <source>
          |    |       \ saving the match in $MATCH{'source'}
          |    |
          |    |...Treating <[file]> as:
-         |    |      |  match the subrule <file> 
+         |    |      |  match the subrule <file>
          |    |       \ appending the match to $MATCH{'file'}
          |    |
          |    |...Treating <.comment>? as:
@@ -3273,8 +3845,8 @@ and the command specified in the directive immediately executed. The available
 commands are:
 
     <debug: on>    - Enable debugging, stop when entire grammar matches
-    <debug: match> - Enable debugging, stope when a rule matches
-    <debug: try>   - Enable debugging, stope when a rule is tried
+    <debug: match> - Enable debugging, stop when a rule matches
+    <debug: try>   - Enable debugging, stop when a rule is tried
     <debug: same>  - Continue debugging (or not) as currently
     <debug: off>   - Disable debugging and continue parsing silently
 
@@ -3299,38 +3871,39 @@ parser's location within both the grammar and the text being matched. That
 report looks like this:
 
     ===============> Trying <grammar> from position 0
-    > cp file1 file2 |...Trying <cmd>   
-                     |   |...Trying <cmd=(cp)>  
+    > cp file1 file2 |...Trying <cmd>
+                     |   |...Trying <cmd=(cp)>
                      |   |    \FAIL <cmd=(cp)>
                      |    \FAIL <cmd>
                       \FAIL <grammar>
     ===============> Trying <grammar> from position 1
-     cp file1 file2  |...Trying <cmd>   
-                     |   |...Trying <cmd=(cp)>  
-     file1 file2     |   |    \_____<cmd=(cp)> matched 'cp' 
-    file1 file2      |   |...Trying <[file]>+   
-     file2           |   |    \_____<[file]>+ matched 'file1'   
-                     |   |...Trying <[file]>+   
-    [eos]            |   |    \_____<[file]>+ matched ' file2'  
-                     |   |...Trying <[file]>+   
+     cp file1 file2  |...Trying <cmd>
+                     |   |...Trying <cmd=(cp)>
+     file1 file2     |   |    \_____<cmd=(cp)> matched 'cp'
+    file1 file2      |   |...Trying <[file]>+
+     file2           |   |    \_____<[file]>+ matched 'file1'
+                     |   |...Trying <[file]>+
+    [eos]            |   |    \_____<[file]>+ matched ' file2'
+                     |   |...Trying <[file]>+
                      |   |    \FAIL <[file]>+
-                     |   |...Trying <target>    
+                     |   |...Trying <target>
                      |   |   |...Trying <file>
                      |   |   |    \FAIL <file>
                      |   |    \FAIL <target>
      <~~~~~~~~~~~~~~ |   |...Backtracking 5 chars and trying new match
-    file2            |   |...Trying <target>    
+    file2            |   |...Trying <target>
                      |   |   |...Trying <file>
                      |   |   |    \____ <file> matched 'file2'
-    [eos]            |   |    \_____<target> matched 'file2'    
-                     |    \_____<cmd> matched ' cp file1 file2' 
-                      \_____<grammar> matched ' cp file1 file2' 
+    [eos]            |   |    \_____<target> matched 'file2'
+                     |    \_____<cmd> matched ' cp file1 file2'
+                      \_____<grammar> matched ' cp file1 file2'
 
 The first column indicates the point in the input at which the parser is
 trying to match, as well as any backtracking or forward searching it may
 need to do. The remainder of the columns track the parser's hierarchical
 traversal of the grammar, indicating which rules are tried, which
 succeed, and what they match.
+
 
 Provided the logfile is a terminal (as it is by default), the debugger
 also pauses at various points in the parsing process--before trying a
@@ -3350,6 +3923,41 @@ debugger is paused repeats the previous command.
 While the debugger is paused you can also type a 'd', which will display
 the result-hash for the current rule. This can be useful for detecting
 which rule isn't returning the data you expected.
+
+
+=head3 Resizing the context string
+
+By default, the first column of the debugger output (which shows the
+current matching position within the string) is limited to a width of
+20 columns.
+
+However, you can change that limit calling the
+C<Regexp::Grammars::set_context_width()> subroutine. You have to specify
+the fully qualified name, however, as Regexp::Grammars does not export
+this (or any other) subroutine.
+
+C<set_context_width()> expects a single argument: a positive integer
+indicating the maximal allowable width for the context column. It issues
+a warning if an invalid value is passed, and ignores it.
+
+If called in a void context, C<set_context_width()> changes the context
+width permanently throughout your application. If called in a scalar or
+list context, C<set_context_width()> returns an object whose destructor
+will cause the context width to revert to its previous value. This means
+you can temporarily change the context width within a given block with
+something like:
+
+    {
+        my $temporary = Regexp::Grammars::set_context_width(50);
+
+        if ($text =~ $parser) {
+            do_stuff_with( %/ );
+        }
+
+    } # <--- context width automagically reverts at this point
+
+and the context width will change back to its previous value when
+C<$temporary> goes out of scope at the end of the block.
 
 
 =head2 User-defined logging with C<< <log:...> >>
@@ -3383,7 +3991,7 @@ to be logged. For example:
         <Suffix= ( : \d+   ) >?
 
             <log: (?{
-                warn => "Elem was: $MATCH{Elem}", 
+                warn => "Elem was: $MATCH{Elem}",
                         "Suffix was $MATCH{Suffix}",
             })>
 
@@ -3470,7 +4078,7 @@ the regex itself. For example:
     <rule: IPV4_Octet_Decimal>
         # Up three digits...
         <MATCH= ( \d{1,3}+ )>
-        
+
         # ...but less that 256...
         <require: (?{ $MATCH <= 255 })>
 
@@ -3569,7 +4177,6 @@ directive. A common mistake is to write:
 which merely attempts to call C<< <rule: error> >> if the first
 alternative fails.
 
-
 =head3 Warning messages
 
 Sometimes, you want to detect problems, but not invalidate the entire
@@ -3587,10 +4194,10 @@ in a parse. For example:
 
         (?:
             # Should be at end of input...
-            \s* \Z                            
+            \s* \Z
           |
             # If not, report the fact but don't fail...
-            <warning: Expected end-of-input> 
+            <warning: Expected end-of-input>
             <warning: (?{ "Extra junk at index $INDEX: $CONTEXT" })>
         )
 
@@ -3603,7 +4210,7 @@ as in the previous example.
 
 =head3 Stubbing
 
-The module also provides three useful shortcuts, specifically to 
+The module also provides three useful shortcuts, specifically to
 make it easy to declare, but not define, rules and tokens.
 
 The C<< <...> >> and C<< <???> >> directives are equivalent to
@@ -3629,7 +4236,132 @@ the C<Item> rule is declared but not defined. That means the grammar
 will compile correctly, (the C<List> rule won't complain about a call to
 a non-existent C<Item>), but if the C<Item> rule isn't overridden in
 some derived grammar, a match-time error will occur when C<List> tries
-to match the C<< <...> >> within C<Item>. 
+to match the C<< <...> >> within C<Item>.
+
+
+=head3 Localizing the (semi-)automatic error messages
+
+Error directives of any of the following forms:
+
+    <error: Expecting identifier>
+
+    <error: >
+
+    <...>
+
+    <!!!>
+
+or their warning equivalents:
+
+    <warning: Expecting identifier>
+
+    <warning: >
+
+    <???>
+
+each autogenerate part or all of the actual error message they produce.
+By default, that autogenerated message is always produced in English.
+
+However, the module provides a mechanism by which you can
+intercept I<every> error or warning that is queued to C<@!>
+via these directives...and localize those messages.
+
+To do this, you call C<Regexp::Grammars::set_error_translator()>
+(with the full qualification, since Regexp::Grammars does not
+export it...or anything else, for that matter).
+
+The C<set_error_translator()> subroutine expect as single
+argument, which must be a reference to another subroutine.
+This subroutine is then called whenever an error or warning
+message is queued to C<@!>.
+
+The subroutine is passed three arguments:
+
+=over
+
+=item *
+
+the message string,
+
+=item *
+
+the name of the rule from which the error or warning was queued, and
+
+=item *
+
+the value of C<$CONTEXT> when the error or warning was encountered
+
+=back
+
+The subroutine is expected to return the final version of the message
+that is actually to be appended to C<@!>. To accomplish this it may make
+use of one of the many internationalization/localization modules
+available in Perl, or it may do the conversion entirely by itself.
+
+The first argument is always exactly what appeared as a message in the
+original directive (regardless of whether that message is supposed to
+trigger autogeneration, or is just a "regular" error message).
+That is:
+
+    Directive                         1st argument
+
+    <error: Expecting identifier>     "Expecting identifier"
+    <warning: That's not a moon!>     "That's not a moon!"
+    <error: >                         ""
+    <warning: >                       ""
+    <...>                             ""
+    <!!!>                             ""
+    <???>                             ""
+
+The second argument always contains the name of the rule in which the
+directive was encountered. For example, when invoked from within
+C<< <rule: Frinstance> >> the following directives produce:
+
+    Directive                         2nd argument
+
+    <error: Expecting identifier>     "Frinstance"
+    <warning: That's not a moon!>     "Frinstance"
+    <error: >                         "Frinstance"
+    <warning: >                       "Frinstance"
+    <...>                             "-Frinstance"
+    <!!!>                             "-Frinstance"
+    <???>                             "-Frinstance"
+
+Note that the "unimplemented" markers pass the rule name with a
+preceding C<'-'>. This allows your translator to distinguish between
+"empty" messages (which should then be generated automatically) and the
+"unimplemented" markers (which should report that the rule is not yet
+properly defined).
+
+If you call C<Regexp::Grammars::set_error_translator()> in a void
+context, the error translator is permanently replaced (at least,
+until the next call to C<set_error_translator()>).
+
+However, if you call C<Regexp::Grammars::set_error_translator()> in a
+scalar or list context, it returns an object whose destructor will
+restore the previous translator. This allows you to install a
+translator only within a given scope, like so:
+
+    {
+        my $temporary
+            = Regexp::Grammars::set_error_translator(\&my_translator);
+
+        if ($text =~ $parser) {
+            do_stuff_with( %/ );
+        }
+        else {
+            report_errors_in( @! );
+        }
+
+    } # <--- error translator automagically reverts at this point
+
+
+B<Warning>: any error translation subroutine you install will be
+called during the grammar's parsing phase (i.e. as the grammar's regex
+is matching). You should therefore ensure that your translator does
+not itself use regular expressions, as nested evaluations of regexes
+inside other regexes are extremely problematical (i.e. almost always
+disastrous) in Perl.
 
 
 =head1 Scoping considerations
@@ -3662,7 +4394,7 @@ defined outside that C<do> block will be unaffected by the module.
 
 
 
-=head1 INTERFACE 
+=head1 INTERFACE
 
 =head2 Perl API
 
@@ -3747,7 +4479,7 @@ that point and starts backtracking.
 
 This directive queues a I<conditional> error message within C<@!> and
 then fails to match (that is, it is equivalent to a C<(?!)> when
-matching). 
+matching).
 
 =item C<< <warning: (?{ CODE })  > >>
 
@@ -3806,7 +4538,7 @@ log file named: C<test-run-20090321.213056>
 Append a message to the log file. If the argument is a code block,
 that code is expected to return the text of the message; if the
 argument is anything else, that something else I<is> the literal
-message. 
+message.
 
 If the block returns two or more values, the first is treated as a log
 message severity indicator, and the remaining values as separate lines
@@ -4020,9 +4752,9 @@ Better still, capture the data in its correct hierarchical context
 using the module's "named subpattern" construct:
 
     <name= ([^\W\d]\w*) >
-    
 
-=item * 
+
+=item *
 
 No recursive descent parser--including those created with
 Regexp::Grammars--can directly handle left-recursive grammars with rules
@@ -4030,7 +4762,7 @@ of the form:
 
     <rule: List>
         <List> , <ListElem>
-        
+
 If you find yourself attempting to write a left-recursive grammar (which
 Perl 5.10 may or may not complain about, but will never successfully
 parse with), then you probably need to use the "separated list"
@@ -4057,7 +4789,7 @@ Similarly, parsing with Regexp::Grammars will fail if your grammar
 places a subrule call within a positive look-ahead, since
 these don't play nicely with the data stack.
 
-This may be an internal problem with perl itself or it may simply be 
+This may be an internal problem with perl itself or it may simply be
 a bug (or perhaps an intrinsic limitation) in the current implementation.
 Investigations are proceeding.
 
@@ -4137,7 +4869,7 @@ grammar and then calls one of its rules. For example, instead of:
 
     my $greeting = qr{
         <grammar: Greeting>
-        
+
         <rule: greet>
             Hi there
             | Hello
@@ -4148,7 +4880,7 @@ you need:
 
     qr{
         <grammar: Greeting>
-        
+
         <rule: greet>
             Hi there
           | Hello
@@ -4159,7 +4891,7 @@ you need:
         <extends: Greeting>
         <greet>
     }xms;
-    
+
 
 =item C<< Multiple definitions for <%s> >>
 
@@ -4173,7 +4905,7 @@ To get rid of the warning, get rid of the extra definitions
 =item C<< Possible invalid subrule call %s >>
 
 Your grammar contained something of the form:
-    
+
     <identifier
     <.identifier
     <[identifier
@@ -4192,7 +4924,7 @@ it and quoting the leading angle:
 =item C<< Possible invalid directive: %s >>
 
 Your grammar contained something of the form:
-    
+
     <identifier:
 
 but which wasn't a known directive like C<< <rule:...> >>
@@ -4214,7 +4946,7 @@ or:
 
     <ListElem>+
 
-Because each subrule call saves its result in a hash entry of the same name, 
+Because each subrule call saves its result in a hash entry of the same name,
 each repeated match will overwrite the previous ones, so only the last match
 will ultimately be saved. If you want to save all the matches, you need to
 tell Regexp::Grammars to save the sequence of results as a nested array within

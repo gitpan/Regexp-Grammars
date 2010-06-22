@@ -17,7 +17,7 @@ my $calculator = do{
             <error:>
         )
 
-        <rule: Answer>  
+        <rule: Answer> 
             <[_Operand=Mult]> ** <[_Op=(\+|\-)]>
                 (?{ $MATCH = shift @{$MATCH{_Operand}};
                     for my $term (@{$MATCH{_Operand}}) {
@@ -27,7 +27,7 @@ my $calculator = do{
                     }
                 })
           |
-            <error: Expected valid arithmetic expression>
+            <Trailing_stuff>
 
         <rule: Mult> 
         (?:
@@ -48,6 +48,9 @@ my $calculator = do{
                <MATCH=Literal>
           | \( <MATCH=Answer> \)
         )
+
+        <rule:  Trailing_stuff>
+            <!!!>
 
         <token: Literal>
             <error:>
@@ -78,10 +81,10 @@ __DATA__
              "Extra junk after expression at index 1: 'zoo'",
              "Expected end of input, but found 'zoo' instead",
              "Expected valid input, but found 'zoo' instead",
-             "Expected valid arithmetic expression, but found '2zoo' instead",
+             "Can't match subrule <Trailing_stuff> (not implemented)",
             ]
 
 zoo         [
              "Expected literal, but found 'zoo' instead",
-             "Expected valid arithmetic expression, but found 'zoo' instead",
+             "Can't match subrule <Trailing_stuff> (not implemented)",
             ]

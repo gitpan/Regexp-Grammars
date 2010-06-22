@@ -24,17 +24,17 @@ my $calculator = do{
 
         <rule: Pow>
             <[Term]> ** \^
-                <MATCH= (?{
-                    my $exp = pop @{$MATCH{Term}};
-                    $exp = $_ ** $exp for @{$MATCH{Term}};
-                    $exp;
-                })>
+                (?{
+                    $MATCH = 1;
+                    $MATCH = $_ ** $MATCH for reverse @{$MATCH{Term}};
+                })
             |
                 <MATCH=Term>
 
         <rule: Term>
-               <MATCH=Literal>
-          | \( <MATCH=Answer> \)
+            <MATCH=Literal>
+          | - \( <Answer> \) <MATCH= (?{ -1 * $MATCH{Answer} })>
+          | [+]? \( <MATCH=Answer> \)
 
         <token: Literal>
             <MATCH=( [+-]? \d++ (?: \. \d++ )?+ )>

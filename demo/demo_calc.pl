@@ -19,7 +19,8 @@ my $calculator = do{
           | <MATCH=Term>
 
         <rule: Term>
-               <MATCH=Literal>
+            <MATCH=Literal>
+          | <Sign=([-+])> \( <Answer> \)
           | \( <MATCH=Answer> \)
 
         <token: Literal>

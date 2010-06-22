@@ -19,8 +19,9 @@ my $calculator = qr{
         <[Operand=Term]> ** <Operator=(\^)> 
 
     <objrule: Term>
-                              <MATCH=Literal>
-      | <.OpenParen=(  \( )>  <MATCH=Answer>  <.CloseParen=( \) )>
+        <MATCH=Literal>
+      | <Sign=(-)> \( <Operand= Answer> \)
+      | <MATCH=Answer>
 
     <token: Literal>
         <MATCH=( [+-]? \d++ (?: \. \d++ )?+ )>

@@ -54,3 +54,35 @@ Revision history for Regexp-Grammars
     * Added fully qualified subrule calls to allow derived rules to call
       base rules: <Base::Class::rulename>
 
+
+
+1.005  Tue Jun 22 05:41:35 2010
+
+    * Tweaked internals to allow matches against stringifying objects,
+      without nasty warnings
+
+    * Extended demo/calc* to allow negatives outside parens (thanks Steven)
+
+    * Pod tweaks (thanks Carl)
+
+    * Added autoaction callbacks
+
+    * Made @! contents unique (no more duplicates due to backtracking retries)
+
+    * Made <MATCH=...> work in the top-level pattern of a grammar
+
+    * Added set_context_width() to allow width of context string column 
+      to be adjusted either permanently or within a scope. (Thanks Daniel)
+
+    * Added l10n feature for <error:...> and <warning:...> directives
+      (thanks Aki!)
+
+    * Added <minimize:> directive
+
+    * Fixed debugging directives in grammars
+
+    * Added per-hash key patterns to <%HASH>  (Thanks Aki)
+
+    * Added <\IDENT> backrefs
+
+    * Added </IDENT> inverserefs
