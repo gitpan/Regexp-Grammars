@@ -86,3 +86,26 @@ Revision history for Regexp-Grammars
     * Added <\IDENT> backrefs
 
     * Added </IDENT> inverserefs
+
+
+1.008  Fri Sep 17 20:53:31 2010
+
+    * Pod nits denitted (thanks Christopher)
+
+    * Added builtin <matchpos> and <matchline> subrules
+
+    * Added <subrule(arg=>list)> and %ARG
+
+    * Added <:argname>
+
+    * Added <\:argname> and </:argname>
+
+    * Added Lucene example to demos (thanks Christian)
+
+    * Added <ws:...> directive
+
+    * Updated diagnostics list
+
+    * Improved behaviour (and documentation) of non-bracketed
+      separators in **
+

@@ -9,7 +9,7 @@ my $list_nonempty = qr{
     <List>
 
     <rule: List>
-        \(  <[Value]> ** (,)  \)
+        \(  <[Value]> ** [,]  \)
 
     <token: Value>
         \d+
@@ -19,7 +19,7 @@ my $list_empty = qr{
     <List>
 
     <rule: List>
-        \(  (?: <[Value]> ** (,) )?  \)
+        \(  (?: <[Value]> ** , x? )?  \)
             (?{ $MATCH{Value} //= [] })
 
     <token: Value>

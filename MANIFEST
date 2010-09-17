@@ -45,4 +45,12 @@ demo/demo_whoson.pl
 t/backref.t
 t/fwdref.t
 t/hash_redef_local.t
+t/alias_literal.t
+t/aliased_subpatterns.t
+t/arg.t
+t/autoflatten.t
+t/backref_ARG.t
+t/local_ws.t
+t/matchline.t
+t/matchpos.t
 META.yml                                 Module meta-data (added by MakeMaker)
