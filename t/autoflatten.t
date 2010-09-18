@@ -23,9 +23,6 @@ my $parser = do{
     }xms
 };
 
-#use Data::Show;
-#show  $parser; exit;
-
 ok +("'abc'" =~ $parser)    => 'Matched str';
 is_deeply $/{str}, { q{} => "'abc'", content => 'abc' }  => 'Unflattened correctly';
 

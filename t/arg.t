@@ -2,7 +2,6 @@
 use strict;
 use 5.010;
 
-use Data::Show;
 use Test::More 'no_plan';
 
 my $test_grammar = do {

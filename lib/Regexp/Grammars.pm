@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.008';
+our $VERSION = '1.009';
 
 # Load the module...
 sub import {
@@ -2065,7 +2065,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.008
+This document describes Regexp::Grammars version 1.009
 
 
 =head1 SYNOPSIS
@@ -4718,7 +4718,7 @@ via these directives...and localize those messages.
 
 To do this, you call C<Regexp::Grammars::set_error_translator()>
 (with the full qualification, since Regexp::Grammars does not
-export it...or anything else, for that matter).
+export it...nor anything else, for that matter).
 
 The C<set_error_translator()> subroutine expect as single
 argument, which must be a reference to another subroutine.

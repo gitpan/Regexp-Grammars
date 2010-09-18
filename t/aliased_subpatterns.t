@@ -11,9 +11,6 @@ my $parser = do{
     }xms
 };
 
-#use Data::Show;
-#show  $parser; exit;
-
 ok +('"abc"' =~ $parser) => 'Matched <str>';
 is $/{str}, '"abc"'      => 'Captured correctly';
 
