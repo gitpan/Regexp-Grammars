@@ -53,4 +53,6 @@ t/backref_ARG.t
 t/local_ws.t
 t/matchline.t
 t/matchpos.t
+t/repop_ws.t
+t/top_is_token.t
 META.yml                                 Module meta-data (added by MakeMaker)

@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.009';
+our $VERSION = '1.010';
 
 # Load the module...
 sub import {
@@ -1218,6 +1218,7 @@ sub _translate_subrule_calls {
         $post_match_debug,
         $rule_name,
         $subrule_names_ref,
+        $magic_ws,
     ) = @_;
 
     # Remember the preceding construct, so as to implement the ** operator...
@@ -1545,7 +1546,7 @@ sub _translate_subrule_calls {
 
         # Handle the ** operator...
         if ($+{list_marker}) {
-            my $ws = $+{ws1} . $+{ws2};
+            my $ws = $magic_ws ? $+{ws1} . $+{ws2} : q{};
 
             $curr_translation = _translate_separated_list(
                 $prev_construct,   $curr_construct,
@@ -1916,6 +1917,7 @@ sub _build_grammar {
             $post_match_debug,
             q{},                        # Expected...what?
             \%subrule_names,
+            0                           # Whitespace isn't magical
         );
 
         # Report how construct was interpreted, if requested to...
@@ -1956,6 +1958,7 @@ sub _build_grammar {
             $post_match_debug,
             $callname,                # Expected...what?
             \%subrule_names,
+            $type eq 'rule',          # Is whitespace magical?
         );
 
         # Report how construct was interpreted, if requested to...
@@ -2065,7 +2068,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.009
+This document describes Regexp::Grammars version 1.010
 
 
 =head1 SYNOPSIS
@@ -2428,8 +2431,13 @@ For example:
     }xms;
 
 The start-pattern at the beginning of the grammar acts like the
-"top" rule of the grammar, and must be matched completely for the
+"top" token of the grammar, and must be matched completely for the
 grammar to match.
+
+This pattern is treated like a token for whitespace
+matching behaviour (see L<"Tokens vs rules (whitespace handling)">).
+That is, whitespace in the start-pattern is treated like whitespace
+in any normal Perl regex.
 
 The rules and tokens are declarations only and they are not directly matched.
 Instead, they act like subroutines, and are invoked by name from the
@@ -5209,6 +5217,21 @@ See also: the C<< <log: LOGFILE> >> and C<< <debug: DEBUG_CMD> >> directives.
 =head1 IMPORTANT CONSTRAINTS AND LIMITATIONS
 
 =over 4
+
+=item *
+
+The Perl 5 regex engine is not reentrant. So any attempt to perform
+a regex match inside a C<(?{ ... })> or C<(??{ ... })> will almost
+certainly lead to either weird data corruption or a segfault.
+
+The same calamities can also occur in any constructor called by 
+C<< <objrule:> >>. If the constructor invokes another regex in any
+way, it will most likely fail catastrophically. In particular, this
+means that Moose constructors will frequently crash and burn within
+a Regex::Grammars grammar (for example, if the Moose-based class
+declares an attribute type constraint such as 'Int', which Moose
+checks using a regex).
+
 
 =item *
 

@@ -115,3 +115,16 @@ Revision history for Regexp-Grammars
 
     * Rerelease to remove spurious dependencies on Data::Show
       (thanks Salvatore!)
+
+
+
+1.010  Tue Sep 28 08:03:42 2010
+
+    * Added documentation warning about non-reentrancy of Perl 5 regex engine
+      (thanks Andrew).
+
+    * Fixed behaviour of ** repetitions wrt whitespace (thanks Andrew)
+
+    * Documented more explicitly that start-pattern is supposed to act
+      like a regular regex (or a token) wrt to whitespace
+

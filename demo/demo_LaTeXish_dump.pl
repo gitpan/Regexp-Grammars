@@ -73,8 +73,8 @@ my $parser = do{
 
 my $input = do{ local $/; <DATA>};
 if ($input =~ $parser) {
-    use Data::Dump 'dump';
-    warn dump [ \%/ ];
+    use Data::Dumper 'Dumper';
+    warn Dumper [ \%/ ];
 }
 
 
