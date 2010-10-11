@@ -128,3 +128,13 @@ Revision history for Regexp-Grammars
     * Documented more explicitly that start-pattern is supposed to act
       like a regular regex (or a token) wrt to whitespace
 
+
+
+1.011  Sun Oct 10 18:57:10 2010
+
+    * Added <!RULENAME> as alias for: (?! <.RULENAME> )
+
+    * Added <?RULENAME> as alias for: (?= <.RULENAME> ) 
+      (and made it work around normal lookahead/capture problem)
+
+    * Fixed major bugs in <:arg> handling

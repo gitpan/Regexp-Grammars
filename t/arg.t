@@ -19,11 +19,12 @@ my $test_grammar = do {
             <content=(.+?)>
         <[revkeyword=unkeyword(?{ keyword => scalar reverse $MATCH{keyword} })]>
 
+
         <rule: unkeyword>
             (??{ quotemeta( ($ARG{prefix}//q{}) . $ARG{keyword} ) })
 
         <token: dekeyword>
-            <terminator=:delim>
+            (<:delim>) <terminator=(?{$CAPTURE})>
     }xms;
 };
 

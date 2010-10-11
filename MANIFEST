@@ -55,4 +55,5 @@ t/matchline.t
 t/matchpos.t
 t/repop_ws.t
 t/top_is_token.t
+t/lookaheads.t
 META.yml                                 Module meta-data (added by MakeMaker)

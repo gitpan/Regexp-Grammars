@@ -10,6 +10,7 @@ my $test_grammar = do {
         <keyword=(\w+)>
             <content=(.+?)>
         <end_keyword (:keyword)>
+
       | <keyword=(\w+)>
             <content=(.+?)>
         <rev_keyword(:keyword)>

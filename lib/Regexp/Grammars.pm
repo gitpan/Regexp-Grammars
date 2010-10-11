@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.010';
+our $VERSION = '1.011';
 
 # Load the module...
 sub import {
@@ -822,6 +822,9 @@ sub _translate_raw_regex {
     # Replace negative lookahead with one that works under R::G...
     $regex =~ s{\(\?!}{(?!(?!)|}gxms;
     # ToDo: Also replace positive lookahead with one that works under R::G...
+    #       This replacement should be of the form:
+    #           $regex =~ s{\(\?!}{(?!(?!)|(?!(?!)|}gxms;
+    #       but need to find a way to insert the extra ) at the other end
 
     return $is_comment ? q{} : $regex;
 }
@@ -1125,7 +1128,7 @@ sub _translate_subrule_call {
     }
 
     # Determine save behaviour...
-    my $is_noncapturing = $savemode eq 'noncapturing';
+    my $is_noncapturing = $savemode =~ /noncapturing|lookahead/;
     my $is_listifying   = $savemode eq 'list';
 
     my $save_code =
@@ -1151,11 +1154,15 @@ sub _translate_subrule_call {
                  : substr($postmodifier,0,1) eq '?'   ? 'any match'
                  :                                      'the match'
                  ;
+    my $do_something_with = $savemode eq 'neglookahead' ? 'lookahead for anything except'
+                          : $savemode eq 'poslookahead' ? 'lookahead for'
+                          :                               'match'
+                          ;
     if ($debug_build) {
         _debug_notify( info =>
                                  "   |",
                                  "   |...Treating $construct as:",
-                                 "   |      |  match the subrule <$subrule> $repeatedly",
+                                 "   |      |  $do_something_with the subrule <$subrule> $repeatedly",
             (defined $arg_desc ? "   |      |  passing the args: ($arg_desc)"
             :                    ()
             ),
@@ -1234,6 +1241,9 @@ sub _translate_subrule_calls {
             (?<self_subrule_scalar_nocap>
                    \.                            \s* (?<subrule>(?&QUALIDENT)) \s* (?<args>(?&ARGLIST)) \s*
             )
+          | (?<self_subrule_lookahead>
+                   (?<sign> \? | \! )            \s* (?<subrule>(?&QUALIDENT)) \s* (?<args>(?&ARGLIST)) \s*
+            )
           | (?<self_subrule_scalar>
                                                  \s* (?<subrule>(?&QUALIDENT)) \s* (?<args>(?&ARGLIST)) \s*
 
@@ -1256,7 +1266,7 @@ sub _translate_subrule_calls {
                        (?<alias>(?&IDENT)) \s* = \s* : (?<subrule>(?&QUALIDENT)) \s*
             )
           | (?<alias_argrule_list>
-                   \[  (?<alias>(?&IDENT)) \s* = \s* : (?<subrule>(?&QUALIDENT)) \s*
+                   \[  (?<alias>(?&IDENT)) \s* = \s* : (?<subrule>(?&QUALIDENT)) \s*  \]
             )
 
           | (?<alias_parens_scalar_nocap>
@@ -1415,7 +1425,25 @@ sub _translate_subrule_calls {
                 );
             }
 
-        # Translate subrule calls of the form: <RULENAME>...
+        # Translate subrule calls of the form: <?RULENAME> and <!RULENAME>...
+            elsif ($+{self_subrule_lookahead}) {
+
+                # Determine type of lookahead, and work around capture problem...
+                my ($type, $pre, $post) = ( 'neglookahead', '(?!(?!)|', ')' );
+                if ($+{sign} eq '?') {
+                    $type = 'poslookahead';
+                    $pre  x= 2;
+                    $post x= 2;
+                }
+
+                $pre . _translate_subrule_call(
+                    $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, $type, q{},
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested,
+                    $subrule_names_ref,
+                  )
+                . $post;
+            }
             elsif ($+{self_subrule_scalar_nocap}) {
                 _translate_subrule_call(
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'noncapturing', $+{modifier},
@@ -1463,7 +1491,7 @@ sub _translate_subrule_calls {
             elsif ($+{self_argrule_scalar}) {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
-                    $curr_construct, qq{'$+{subrule}'}, $+{subrule}, 'noncapturing', $+{modifier},
+                    $curr_construct, qq{'$+{subrule}'}, $pattern, 'noncapturing', $+{modifier},
                     $compiletime_debugging_requested, $runtime_debugging_requested,
                     "in \$ARG{'$+{subrule}'}"
                 );
@@ -2068,7 +2096,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.010
+This document describes Regexp::Grammars version 1.011
 
 
 =head1 SYNOPSIS
@@ -2170,6 +2198,9 @@ This document describes Regexp::Grammars version 1.010
 
     <RULENAME(...)>          Call named subrule, passing args to it
 
+    <!RULENAME>              Call subrule and fail if it matches
+    <!RULENAME(...)>         (shorthand for (?!<.RULENAME>) )
+
     <:IDENT>                 Match contents of $ARG{IDENT} as a pattern
     <\:IDENT>                Match contents of $ARG{IDENT} as a literal
     </:IDENT>                Match closing delimiter for $ARG{IDENT}
@@ -2192,6 +2223,7 @@ This document describes Regexp::Grammars version 1.010
 
     <.SUBRULE>               Call subrule (one of the above forms),
                              but don't save the result in %MATCH
+
 
     <[SUBRULE]>              Call subrule (one of the above forms), but
                              append result instead of overwriting it
@@ -3060,6 +3092,40 @@ This is especially useful in conjunction with
 L<result distillation|"Result distillation">.
 
 
+=head2 Lookahead (zero-width) subrules
+
+Non-capturing subrule calls can be used in normal lookaheads:
+
+    <rule: qualified_typename>
+        # A valid typename and has a :: in it...
+        (?= <.typename> )  [^\s:]+ :: \S+
+
+    <rule: identifier>
+        # An alpha followed by alnums (but not a valid typename)...
+        (?! <.typename> )    [^\W\d]\w*
+
+but the syntax is a little unwieldy. More importantly, an internal
+problem with backtracking causes positive lookaheads to mess up
+the module's named capturing mechanism.
+
+So Regexp::Grammars provides two shorthands:
+
+    <!typename>        same as: (?! <.typename> )
+    <?typename>        same as: (?= <.typename> ) ...but works correctly!
+
+These two constructs can also be called with arguments, if necessary:
+
+    <rule: Command>
+        <Keyword>
+        (?:
+            <!Terminator(:Keyword)>  <Args=(\S+)>
+        )?
+        <Terminator(:Keyword)>
+
+Note that, as the above equivalences imply, neither of these forms of a
+subroutine call ever captures what it matches.
+
+
 =head2 Matching separated lists
 
 One of the commonest tasks in text parsing is to match a list of unspecified
@@ -3421,7 +3487,7 @@ by prefixing the identifier with a single C<:>. This is especially
 useful when refactoring subrules. For example, instead of:
 
     <rule: Command>
-        <Keyword>  <Command>  end_ <\Keyword>
+        <Keyword>  <CommandBody>  end_ <\Keyword>
 
     <rule: Placeholder>
         <Keyword>    \.\.\.   end_ <\Keyword>
@@ -3429,7 +3495,7 @@ useful when refactoring subrules. For example, instead of:
 you could parameterize the Terminator rule, like so:
 
     <rule: Command>
-        <Keyword>  <Command>  <Terminator(:Keyword)>
+        <Keyword>  <CommandBody>  <Terminator(:Keyword)>
 
     <rule: Placeholder>
         <Keyword>    \.\.\.   <Terminator(:Keyword)>
@@ -5291,12 +5357,13 @@ Similarly, parsing with Regexp::Grammars will fail if your grammar
 places a subrule call within a positive look-ahead, since
 these don't play nicely with the data stack.
 
-This may be an internal problem with perl itself or it may simply be
-a bug (or perhaps an intrinsic limitation) in the current implementation.
-Investigations are proceeding.
+This seems to be an internal problem with perl itself.
+Investigations, and attempts at a workaround, are proceeding.
 
 For the time being, you need to make sure that grammar rules don't appear
-inside a positive lookahead.
+inside a positive lookahead or use the
+L<<< C<< <?RULENAME> >> construct | "Lookahead (zero-width) subrules" >>>
+instead
 
 =item *
 
