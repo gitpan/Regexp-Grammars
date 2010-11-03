@@ -138,3 +138,16 @@ Revision history for Regexp-Grammars
       (and made it work around normal lookahead/capture problem)
 
     * Fixed major bugs in <:arg> handling
+
+
+1.012  Wed Nov  3 20:24:36 2010
+
+    * Added RFC5322 example (thanks Tom and Abigail!)
+
+    * Added <:nocontext> and <:context> directives to optimize
+      away unwanted context substrings.
+
+    * Solved transitive inheritance problem
+      (grammars now fully polymorphic)
+
+    * Added NEXT:: namespace for generic polymorphism

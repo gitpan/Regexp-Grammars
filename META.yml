@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Regexp-Grammars
-version:             1.011
+version:             1.012
 abstract:            Add grammatical parsing features to Perl 5.10 regexes
 license:             ~
 author:              

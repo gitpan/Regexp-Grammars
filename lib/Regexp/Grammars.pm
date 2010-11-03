@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.011';
+our $VERSION = '1.012';
 
 # Load the module...
 sub import {
@@ -566,6 +566,9 @@ sub _pop_current_result_frame {
     # Remove "private" captures (i.e. those starting with _)...
     delete @{$curr_frame}{grep {substr($_,0,1) eq '_'} keys %{$curr_frame} };
 
+    # Remove "nocontext" marker...
+    my $nocontext = delete $curr_frame->{'~'};
+
     # Build a clone of the current frame...
     my $cloned_result_frame
         = exists $curr_frame->{'='}                                  ? $curr_frame->{'='}
@@ -583,6 +586,11 @@ sub _pop_current_result_frame {
                 $cloned_result_frame = $replacement_result_frame;
             }
         }
+    }
+
+    # Remove capture if not requested...
+    if ($nocontext && ref $cloned_result_frame eq 'HASH' && keys %{$cloned_result_frame} > 1) {
+        delete $cloned_result_frame->{q{}};
     }
 
     # Nest a clone of current frame inside a clone of the caller frame...
@@ -619,6 +627,9 @@ sub _pop_current_result_frame_with_list {
     # Remove "private" captures (i.e. those starting with _)...
     delete @{$curr_frame}{grep {substr($_,0,1) eq '_'} keys %{$curr_frame} };
 
+    # Remove "nocontext" marker...
+    my $nocontext = delete $curr_frame->{'~'};
+
     # Clone the current frame...
     my $cloned_result_frame
         = exists $curr_frame->{'='}                                  ? $curr_frame->{'='}
@@ -636,6 +647,11 @@ sub _pop_current_result_frame_with_list {
                 $cloned_result_frame = $replacement_result_frame;
             }
         }
+    }
+
+    # Remove capture if not requested...
+    if ($nocontext && ref $cloned_result_frame eq 'HASH' && keys %{$cloned_result_frame} > 1) {
+        delete $cloned_result_frame->{q{}};
     }
 
     # Append a clone of current frame inside a clone of the caller frame...
@@ -664,6 +680,7 @@ sub _pop_current_result_frame_with_list {
 # Namespace in which grammar inheritance occurs...
 my $CACHE = 'Regexp::Grammars::_CACHE_::';
 my $CACHE_LEN = length $CACHE;
+my %CACHE; #...for subrule tracking
 
 # This code inserted at the start of every grammar regex
 #    (initializes the result stack cleanly and backtrackably, via local)...
@@ -674,11 +691,10 @@ my $PROLOGUE = q{((?{; @! = () if !pos;
 
 # This code inserted at the end of every grammar regex
 #    (puts final result in %/. Also defines default <ws>, <hk>, etc.)...
-my $EPILOGUE = q{
-    )(?{; $Regexp::Grammars::RESULT_STACK[-1]{""} //= $^N;
+my $EPILOGUE = q{)(?{; $Regexp::Grammars::RESULT_STACK[-1]{q{}} //= $^N;
          local $Regexp::Grammars::match_frame = pop @Regexp::Grammars::RESULT_STACK;
          delete @{$Regexp::Grammars::match_frame}{
-                    grep {substr($_,0,1) eq '_'} keys %{$Regexp::Grammars::match_frame}
+                    '~', grep {substr($_,0,1) eq '_'} keys %{$Regexp::Grammars::match_frame}
                 };
          if (exists $Regexp::Grammars::match_frame->{'='}) {
             if (ref($Regexp::Grammars::match_frame->{'='}) eq 'HASH') {
@@ -699,6 +715,8 @@ my $EPILOGUE = q{
         (?<matchline> (?{; $Regexp::Grammars::RESULT_STACK[-1]{"="} = 1 + substr($_,0,pos) =~ tr/\n/\n/; }) )
     )
 };
+my $EPILOGUE_NC = $EPILOGUE;
+   $EPILOGUE_NC =~ s{ ; [^;]+ ;}{;}xms;
 
 
 #=====[ MISCELLANEOUS PATTERNS THAT MATCH USEFUL THINGS ]========
@@ -1090,8 +1108,8 @@ sub _translate_separated_list {
 }
 
 sub _translate_subrule_call {
-    my ( $construct, $alias, $subrule, $args, $savemode, $postmodifier,
-         $debug_build, $debug_runtime, $valid_subrule_names_ref)
+    my ( $grammar_name, $construct, $alias, $subrule, $args, $savemode, $postmodifier,
+         $debug_build, $debug_runtime, $valid_subrule_names_ref, $nocontext)
         = @_;
 
     # Translate arg list, if provided...
@@ -1111,10 +1129,28 @@ sub _translate_subrule_call {
     }
 
     # Transform qualified subrule names...
+    my $simple_subrule = $subrule;
+    my $start_grammar = (($simple_subrule =~ s{(.*)::}{}xms) ? $1 : "");
+    if ($start_grammar !~ /^NEXT$|::/) {
+        $start_grammar = caller(3).'::'.$start_grammar;
+    }
+
+    my @candidates = $start_grammar eq 'NEXT' ? _ancestry_of($grammar_name)
+                   :                            _ancestry_of($start_grammar);
+
+    # Rename fully-qualified rule call, if to ancestor grammar...
+    RESOLVING:
+    for my $parent_class (@candidates) {
+        my $inherited_subrule = $parent_class.'::'.$simple_subrule;
+        if ($CACHE{$inherited_subrule}) {
+            $subrule = $inherited_subrule;
+            last RESOLVING;
+        }
+    }
+
+    # Replace package separators, which regex engine can't handle...
     my $internal_subrule = $subrule;
     $internal_subrule =~ s{::}{_88_}gxms;
-    my $simple_subrule = $subrule;
-    $simple_subrule =~ s{.*::}{}xms;
 
     # Shortcircuit if unknown subrule invoked...
     if (!$valid_subrule_names_ref->{$subrule}) {
@@ -1180,6 +1216,8 @@ sub _translate_subrule_call {
     # Translate to standard regex code...
     return qq{(?:(?{;
             local \@Regexp::Grammars::RESULT_STACK = (\@Regexp::Grammars::RESULT_STACK, {'\@'=>{$args}});
+            \$Regexp::Grammars::RESULT_STACK[-2]{'~'} = $nocontext
+                if \@Regexp::Grammars::RESULT_STACK >= 2;
             $debug_pre})((?&$internal_subrule))(?{;
                 local \@Regexp::Grammars::RESULT_STACK = (
                     $save_code
@@ -1189,6 +1227,7 @@ sub _translate_subrule_call {
 
 sub _translate_rule_def {
     my ($type, $qualifier, $name, $callname, $qualname, $body, $objectify, $local_ws) = @_;
+    $qualname =~ s{::}{_88_}gxms;
 
     # Return object if requested...
     my $objectification =
@@ -1209,8 +1248,7 @@ sub _translate_rule_def {
                 (?{;\$#{!}=delete(\$Regexp::Grammars::RESULT_STACK[-1]{'!'})//0;
                            delete(\$Regexp::Grammars::RESULT_STACK[-1]{'\@'});
                 })
-            )
-            )
+            ))
         )
     };
 }
@@ -1218,7 +1256,8 @@ sub _translate_rule_def {
 
 # Locate any valid <...> sequences and replace with native regex code...
 sub _translate_subrule_calls {
-    my ($grammar_spec,
+    my ($grammar_name,
+        $grammar_spec,
         $compiletime_debugging_requested,
         $runtime_debugging_requested,
         $pre_match_debug,
@@ -1226,13 +1265,14 @@ sub _translate_subrule_calls {
         $rule_name,
         $subrule_names_ref,
         $magic_ws,
+        $nocontext,
     ) = @_;
 
     # Remember the preceding construct, so as to implement the ** operator...
     my $prev_construct   = q{};
     my $prev_translation = q{};
 
-    # Translate all other calls...
+    # Translate all other calls (MAIN GRAMMAR FOR MODULE)...
     $grammar_spec =~ s{
       (?<list_marker> (?<ws1> \s*+)  \*\* (?<ws2> \s*+) )?
       (?<construct>
@@ -1309,6 +1349,14 @@ sub _translate_subrule_calls {
                     debug \s* : \s* (?<cmd> run | match | step | try | off | on) \s*
             )
           |
+            (?<context_directive>
+                    context \s* : \s*
+            )
+          |
+            (?<nocontext_directive>
+                    nocontext \s* : \s*
+            )
+          |
             (?<yadaerror_directive>
                     [.][.][.]
                   | [!][!][!]
@@ -1349,12 +1397,13 @@ sub _translate_subrule_calls {
         (?<CHARSET>   \[              \^?+ \\?+ \]?+ [^]]*+                                         \]   )
         (?<IDENT>     [^\W\d]\w*+                                                                        )
         (?<QUALIDENT> (?: [^\W\d]\w*+ :: )*  [^\W\d]\w*+                                                 )
-        (?<LITERAL>   (?&NUMBER) | (?&STRING)                                                            )
+        (?<LITERAL>   (?&NUMBER) | (?&STRING) | (?&VAR)                                                  )
         (?<NUMBER>    [+-]? \d++ (?:\. \d++)? (?:[eE] [+-]? \d++)?                                       )
         (?<STRING>    ' [^\\']++ (?: \\. [^\\']++ )* '                                                   )
         (?<ARGLIST>   (?&PARENCODE) | \( \s* (?&ARGS)? \s* \) | (?# NOTHING )                            )
         (?<ARGS>      (?&ARG) \s* (?: , \s* (?&ARG) \s* )*  ,?                                           )
-        (?<ARG>       : (?&IDENT)  |  (?&KEY) \s* => \s* (?&LITERAL)                                     )
+        (?<ARG>       (?&VAR)  |  (?&KEY) \s* => \s* (?&LITERAL)                                         )
+        (?<VAR>       : (?&IDENT)                                                                        )
         (?<KEY>       (?&IDENT) | (?&LITERAL)                                                            )
     )
     }{
@@ -1410,18 +1459,22 @@ sub _translate_subrule_calls {
         # Translate subrule calls of the form: <ALIAS=RULENAME>...
             elsif ($+{alias_subrule_scalar}) {
                 _translate_subrule_call(
+                    $grammar_name,
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
                     $subrule_names_ref,
+                    $nocontext,
                 );
             }
             elsif ($+{alias_subrule_list}) {
                 _translate_subrule_call(
+                    $grammar_name,
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
                     $subrule_names_ref,
+                    $nocontext,
                 );
             }
 
@@ -1437,35 +1490,43 @@ sub _translate_subrule_calls {
                 }
 
                 $pre . _translate_subrule_call(
+                    $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, $type, q{},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
                     $subrule_names_ref,
+                    $nocontext,
                   )
                 . $post;
             }
             elsif ($+{self_subrule_scalar_nocap}) {
                 _translate_subrule_call(
+                    $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'noncapturing', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
                     $subrule_names_ref,
+                    $nocontext,
                 );
             }
             elsif ($+{self_subrule_scalar}) {
                 _translate_subrule_call(
+                    $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
                     $subrule_names_ref,
+                    $nocontext,
                 );
             }
             elsif ($+{self_subrule_list}) {
                 _translate_subrule_call(
+                    $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
                     $subrule_names_ref,
+                    $nocontext,
                 );
             }
 
@@ -1564,6 +1625,14 @@ sub _translate_subrule_calls {
                     q{},
                     $compiletime_debugging_requested, -$rule_name
                 );
+            }
+            elsif ($+{context_directive}) {
+                $nocontext = 0;
+                q{};  # Remove the directive
+            }
+            elsif ($+{nocontext_directive}) {
+                $nocontext = 1;
+                q{};  # Remove the directive
             }
 
         # There shouldn't be any other possibility...
@@ -1685,6 +1754,16 @@ my $EXTENDS_DIRECTIVE
 # Cache of rule/token names within defined grammars...
 my %subrule_names_for;
 
+# Build list of ancestors for a given grammar...
+sub _ancestry_of {
+    my ($grammar_name) = @_;
+
+    return () if !$grammar_name;
+
+    use mro;
+    return map { substr($_, $CACHE_LEN) } @{mro::get_linear_isa($CACHE.$grammar_name, 'c3')};
+}
+
 # Detect and translate any requested grammar inheritances...
 sub _extract_inheritances {
     my ($regex, $compiletime_debugging_requested, $derived_grammar_name) = @_;
@@ -1696,14 +1775,14 @@ sub _extract_inheritances {
         my $orig_grammar_name = $+{base_grammar_name};
         my $grammar_name = $orig_grammar_name;
         if ($grammar_name !~ /::/) {
-            $grammar_name = caller(2) . "::$grammar_name";
+            $grammar_name = caller(2).'::'.$grammar_name;
         }
 
         if (exists $user_defined_grammar{$grammar_name}) {
             if ($compiletime_debugging_requested) {
                 _debug_notify( info =>
                     "Processing inheritance request for $grammar_name...",
-                    "",
+                    q{},
                 );
             }
 
@@ -1721,16 +1800,12 @@ sub _extract_inheritances {
         }
     }
 
-    # Retrieve ancestors in C3 dispatch order and remove prefixes...
-    use mro;
-    my @ancestors = @{mro::get_linear_isa($CACHE.$derived_grammar_name, 'c3')};
-    shift @ancestors;
-    for my $ancestor (@ancestors) {
-        substr($ancestor,0,$CACHE_LEN,q{});
-    }
+    # Retrieve ancestors (but not self) in C3 dispatch order...
+    my (undef, @ancestors) = _ancestry_of($derived_grammar_name);
 
     # Extract subrule names and implementations for ancestors...
     my %subrule_names = map { %{$subrule_names_for{$_}} } @ancestors;
+    $_ = -1 for values %subrule_names;
     my $implementation
         = join "\n", map { $user_defined_grammar{$_} } @ancestors;
 
@@ -1821,6 +1896,13 @@ sub _build_grammar {
             ;
 
     # Subdivide into rule and token definitions, preparing to process each...
+    # REWRITE THIS, USING (PROBABLY NEED TO REFACTOR ALL GRAMMARS TO REUSe
+    # THESE COMPONENTS:
+    #   (?<PARAMLIST> \( \s* (?&PARAMS)? \s* \) | (?# NOTHING )                                          )
+    #   (?<PARAMS>    (?&PARAM) \s* (?: , \s* (?&PARAM) \s* )*  ,?                                       )
+    #   (?<PARAM>     (?&VAR) (?: \s* = \s* (?: (?&LITERAL) | (?&PARENCODE) ) )?                         )
+    #   (?<LITERAL>   (?&NUMBER) | (?&STRING) | (?&VAR)                                                  )
+    #   (?<VAR>       : (?&IDENT)                                                                        )
     my @defns = split m{
             ^ [^#\n]*? \K < (obj|)(rule|token) \s*+ :
               \s*+ ((?:${IDENT}::)*+) (?: ($IDENT) \s*+ = \s*+ )?+
@@ -1853,7 +1935,7 @@ sub _build_grammar {
             "No main regex specified before rule definitions.",
             "Grammar will never match anything.",
             "(Did you forget a <grammar:...> specification?)",
-            "",
+            q{},
         );
     }
 
@@ -1870,6 +1952,11 @@ sub _build_grammar {
             $grammar_name = caller(1) . "::$grammar_name";
         }
         $is_grammar = 1;
+
+        # Add subrule definitions to namespace...
+        for my $subrule_name (@subrule_names) {
+            $CACHE{$grammar_name.'::'.$subrule_name} = 1;
+        }
     }
     else {
         state $dummy_grammar_index = 0;
@@ -1891,6 +1978,11 @@ sub _build_grammar {
     @subrule_names{ keys %{$inherited_subrule_names} }
         = values %{$inherited_subrule_names};
 
+    # Remove any top-level nocontext directive...
+    my $nocontext = ($main_regex =~ s{ < nocontext \s* : \s* > }{}gxms) ? 1
+                  : ($main_regex =~ s{ <   context \s* : \s* > }{}gxms) ? 0
+                  :                                                       0;
+
     # If so, set up to save the grammar...
     if ($is_grammar) {
         # Normalize grammar name and report...
@@ -1900,7 +1992,7 @@ sub _build_grammar {
         if ($compiletime_debugging_requested) {
             _debug_notify( info =>
                 "Processing definition of grammar $grammar_name...",
-                "",
+                q{},
             );
         }
 
@@ -1924,8 +2016,8 @@ sub _build_grammar {
         # Remember set of valid subrule names...
         $subrule_names_for{$grammar_name}
             = {
-                map { ($_ => 1,  $grammar_name.'::'.$_ => 1 ) }
-                  keys %subrule_names
+                map({ ($_ => 1) } keys %subrule_names), 
+                map({ ($grammar_name.'::'.$_ => 1) } grep { !/::/ } keys %subrule_names), 
               };
     }
     else { #...not a grammar specification
@@ -1938,6 +2030,7 @@ sub _build_grammar {
 
         # Any actual regex is processed first...
         $regex = _translate_subrule_calls(
+            $grammar_name,
             $main_regex,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
@@ -1945,7 +2038,8 @@ sub _build_grammar {
             $post_match_debug,
             q{},                        # Expected...what?
             \%subrule_names,
-            0                           # Whitespace isn't magical
+            0,                          # Whitespace isn't magical
+            $nocontext,
         );
 
         # Report how construct was interpreted, if requested to...
@@ -1958,16 +2052,12 @@ sub _build_grammar {
         }
     }
 
-    # Build common prefix to fully qualified rulenames
-    my $qual_prefix = $grammar_name.'::';
-    $qual_prefix =~ s/::/_88_/g;
-
     #  Then iterate any following rule definitions...
     while (@defns) {
         # Grab details of each rule defn (as extracted by previous split)...
         my ($objectify, $type, $qualifier, $name, $callname, $body) = splice(@defns, 0, 6);
         $name //= $callname;
-        my $qualified_name = $qual_prefix.$callname;
+        my $qualified_name = $grammar_name.'::'.$callname;
 
         # Report how construct was interpreted, if requested to...
         if ($compiletime_debugging_requested) {
@@ -1979,6 +2069,7 @@ sub _build_grammar {
 
         # Translate any nested <...> constructs...
         $body = _translate_subrule_calls(
+            $grammar_name,
             $body,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
@@ -1987,6 +2078,7 @@ sub _build_grammar {
             $callname,                # Expected...what?
             \%subrule_names,
             $type eq 'rule',          # Is whitespace magical?
+            $nocontext,               # Start with the global nocontextuality
         );
 
         # Report how construct was interpreted, if requested to...
@@ -2075,14 +2167,15 @@ sub _build_grammar {
     }
     # Otherwise, aggregrate the final grammar...
     else {
-        return _complete_regex($regex.$inherited_rules, $pre_match_debug, $post_match_debug);
+        return _complete_regex($regex.$inherited_rules, $pre_match_debug, $post_match_debug, $nocontext);
     }
 }
 
 sub _complete_regex {
-    my ($regex, $pre_match_debug, $post_match_debug) = @_;
+    my ($regex, $pre_match_debug, $post_match_debug, $nocontext) = @_;
 
-    return qq{$pre_match_debug$PROLOGUE$regex$EPILOGUE$post_match_debug};
+    return $nocontext ? qq{$pre_match_debug$PROLOGUE$regex$EPILOGUE_NC$post_match_debug}
+                      : qq{$pre_match_debug$PROLOGUE$regex$EPILOGUE$post_match_debug};
 }
 
 1; # Magic true value required at end of module
@@ -2096,7 +2189,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.011
+This document describes Regexp::Grammars version 1.012
 
 
 =head1 SYNOPSIS
@@ -2251,6 +2344,8 @@ This document describes Regexp::Grammars version 1.011
     <log: (?{ CODE })  >     Explicitly add a message to the log
     <minimize:>              Simplify the result of a subrule match
     <ws: PATTERN >           Override automatic whitespace matching
+    <context:>               Switch on context substring retention
+    <nocontext:>             Switch off context substring retention
 
 
 
@@ -2593,7 +2688,9 @@ C<'sentence'> and its value will be a reference to a hash, which in turn will
 have keys: C<'noun'>, C<'verb'>, and C<'object'>.
 
 In addition each result-hash has one extra key: the empty string. The
-value for this key is whatever string the entire subrule call matched.
+value for this key is whatever substring the entire subrule call matched.
+This value is known as the I<context substring>.
+
 So, for example, a successful call to C<< <sentence> >> might add
 something like the following to the current result-hash:
 
@@ -2611,7 +2708,7 @@ something like the following to the current result-hash:
 Note, however, that if the result-hash at any level contains I<only>
 the empty-string key (i.e. the subrule did not call any sub-subrules or
 save any of their nested result-hashes), then the hash is "unpacked"
-and just the matched substring itself if returned.
+and just the context substring itself is returned.
 
 For example, if C<< <rule: sentence> >> had been defined:
 
@@ -2652,6 +2749,71 @@ would produce something needlessly complex, such as:
         },
     }
 
+
+=head3 Turning off the context substring
+
+The context substring is convenient for debugging and for generating
+error messages but, in a large grammar, or when parsing a long string,
+the capture and storage of many nested substrings may quickly become
+prohibitively expensive.
+
+So Regexp::Grammars provides a directive to prevent context substrings
+from being retained. Any rule or token that includes the directive
+C<< <nocontext:> >> anywhere in the rule's body will not retain any
+context substring it matches...unless that substring would be the only
+entry in its result hash (which only happens within objrules and
+objtokens).
+
+If a C<< <nocontext:> >> directive appears I<before> the first rule or
+token definition (i.e. as part of the main pattern), then the entire grammar
+will discard all context substrings from every one of its rules
+and tokens.
+
+However, you can override this universal prohibition with a second
+directive: C<< <context:> >>. If this directive appears in any rule or
+token, that rule or token I<will> save its context substring, even if a
+global C<< <nocontext:> >> is in effect.
+
+This means that this grammar:
+
+    qr{
+        <Command>
+
+        <rule: Command>
+            <nocontext:>
+            <Keyword> <arg=(\S+)> ** <.ws>
+
+        <token: Keyword>
+            <Move> | <Copy> | <Delete>
+
+        # etc.
+    }x
+
+and this grammar:
+
+    qr{
+        <nocontext:>
+        <Command>
+
+        <rule: Command>
+            <Keyword> <arg=(\S+)> ** <.ws>
+
+        <token: Keyword>
+            <context:>
+            <Move> | <Copy> | <Delete>
+
+        # etc.
+    }x
+
+will behave identically (saving context substrings for keywords, but not
+for commands), except that the first version will also retain the global
+context substring (i.e. $/{""}), whereas the second version will not.
+
+Note that C<< <context:> >> and C<< <nocontext:> >> have no effect on,
+or even any interaction with, the various
+L<result distillation|"Result distillation"> mechanisms,
+which continue to work in the usual way when either or both of the
+directives is used.
 
 
 =head2 Renaming subrule results
@@ -3794,14 +3956,6 @@ If you call a subrule using a fully qualified name (such as
 C<< <List::Integral::Digit> >>), the grammar calls that
 version of the rule, rather than the most-derived version.
 
-Note, however, that fully qualified subrule calls are I<not> (yet)
-polymorphically dispatched. This means that you cannot currently just
-specify the name some ancestor grammar (or C<SUPER> or C<NEXT> for that
-matter) and have the grammar find the correct inherited version of the
-subrule. At present you must specify the name of the exact ancestor
-grammar whose rule you want. This limitation will be removed in a
-future release.
-
 
 =head2 Debugging named grammars
 
@@ -4019,9 +4173,10 @@ may not always be "distillable", for example:
             })
 
 Note that you can also partially override the subrule return behaviour.
-Normally, the subrule returns the complete text it matched under the "empty
-key" of its result-hash. That is, of course, C<$MATCH{""}>, so you can
-override just that behaviour by directly assigning to that entry.
+Normally, the subrule returns the complete text it matched as its context
+substring (i.e. under the "empty key") in its result-hash. That is, of
+course, C<$MATCH{""}>, so you can override just that behaviour by
+directly assigning to that entry.
 
 For example, if you have a rule that matches key/value pairs from a
 configuration file, you might prefer that any trailing comments not be

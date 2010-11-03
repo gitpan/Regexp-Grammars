@@ -56,4 +56,8 @@ t/matchpos.t
 t/repop_ws.t
 t/top_is_token.t
 t/lookaheads.t
+t/grammar_polymorphism.t
+t/no_context.t
+t/no_context_counterlocal.t
+t/no_context_local.t
 META.yml                                 Module meta-data (added by MakeMaker)
