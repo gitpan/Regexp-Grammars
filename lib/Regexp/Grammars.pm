@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.012';
+our $VERSION = '1.013';
 
 # Load the module...
 sub import {
@@ -202,7 +202,7 @@ sub _debug_context {
 
     # Get current matching position (and some additional trailing context)...
     my $context_str
-        = substr(_show_metas(substr(($_//q{}).q{},pos(),$field_width)),0,$field_width);
+        = substr(_show_metas(substr(($_//q{}).q{},pos()//0,$field_width)),0,$field_width);
 
     # Build the context string, handling special cases...
     our $last_context_str;
@@ -357,7 +357,7 @@ sub _debug_trying {
     my $leader = _debug_context() . q{|   } x ($stack_height-2);
 
     # Detect and report any backtracking prior to this attempt...
-    our $last_try_pos;  #...Stores the pos() of the most recent match attempt?
+    our $last_try_pos //= 0;  #...Stores the pos() of the most recent match attempt?
     my $backtrack_distance = $last_try_pos - pos();
     if ($backtrack_distance > 0) {
         say {*Regexp::Grammars::LOGFILE} ' <' . q{~} x (length(_debug_context(q{ }))-3) . q{ }
@@ -375,19 +375,21 @@ sub _debug_trying {
     _debug_interact($stack_height, $leader, $curr_frame_ref, 'step');
 
     # Record the attempt, for later error handling in _debug_matched()...
-    our @try_stack;
-    push @try_stack, {
-        height  => $stack_height,
-        subrule => $subrule,
-        # errmsg should align under:              |...Trying $subrule\t
-        errmsg  => q{|   } x ($stack_height-2) . "|    \\FAIL $subrule",
-    };
+    if ($subrule ne 'next alternative') {
+        our @try_stack;
+        push @try_stack, {
+            height  => $stack_height,
+            subrule => $subrule,
+            # errmsg should align under:              |...Trying $subrule\t
+            errmsg  => q{|   } x ($stack_height-2) . "|    \\FAIL $subrule",
+        };
+    }
     $last_try_pos = pos();
 }
 
 # Print a message indicating a successful (sub)match...
 sub _debug_matched {
-    my ($stack_height, $curr_frame_ref, $subrule, $text) = @_;
+    my ($stack_height, $curr_frame_ref, $subrule, $matched_text) = @_;
 
     # Clean up any intervening unsuccessful attempts...
     _debug_handle_failures($stack_height, $subrule, 'in match');
@@ -396,18 +398,15 @@ sub _debug_matched {
     my $debug_context = _debug_context();
     my $leader  = $debug_context . q{|   } x ($stack_height-2);
     my $message = ($stack_height ? '|   ' : q{})
-                . " \\_____$subrule matched '";
+                . " \\_____$subrule matched ";
     my $filler  = $stack_height
                     ? '|   ' . q{ } x (length($message)-4)
                     :          q{ } x  length($message);
 
-    # Split multi-line match texts and indent them correctly...
-    $text = join "\n$leader$filler", split "\n", $text;
-
-    our $last_try_pos;  #...Stores the pos() of the most recent match attempt?
+    our $last_try_pos //= 0;  #...Stores the pos() of the most recent match attempt?
 
     # Report if match required backtracking...
-    my $backtrack_distance = $last_try_pos - pos();
+    my $backtrack_distance = $last_try_pos - (pos()//0);
     if ($backtrack_distance > 0) {
         say {*Regexp::Grammars::LOGFILE} ' <' . q{~} x (length(_debug_context(q{ }))-3) . q{ }
                     . q{|   } x ($stack_height-2)
@@ -418,12 +417,16 @@ sub _debug_matched {
     }
     $last_try_pos = pos();
 
+    # Format match text (splitting multi-line texts and indent them correctly)...
+    $matched_text =  defined($matched_text)
+        ? $matched_text = q{'} . join("\n$leader$filler", split "\n", $matched_text) . q{'}
+        : q{};
+
     # Print match message...
-    print {*Regexp::Grammars::LOGFILE} $leader . $message . $text . qq{'\t};
+    print {*Regexp::Grammars::LOGFILE} $leader . $message . $matched_text . qq{\t};
 
     # Check for user interaction...
-    _debug_interact($stack_height, $leader, $curr_frame_ref,
-                    $stack_height ?  'match' : 'run');
+    _debug_interact($stack_height, $leader, $curr_frame_ref, $stack_height ?  'match' : 'run');
 }
 
 # Print a message indicating a successful (sub)match...
@@ -500,6 +503,65 @@ sub _build_debugging_statements {
             if \$Regexp::Grammars::DEBUG_LEVEL{\$Regexp::Grammars::DEBUG};
         },
     );
+}
+
+sub _build_raw_debugging_statements {
+    my ($debugging_active, $subpattern, $extra_pre_indent) = @_;
+
+    return (q{}, q{}) if ! $debugging_active;
+
+    $extra_pre_indent //= 0;
+
+    if ($subpattern eq '|') {
+        return (
+        q{},
+        qq{
+            (?{;Regexp::Grammars::_debug_trying(\@Regexp::Grammars::RESULT_STACK+$extra_pre_indent,
+              \$Regexp::Grammars::RESULT_STACK[-2+$extra_pre_indent], 'next alternative')
+                if \$Regexp::Grammars::DEBUG_LEVEL{\$Regexp::Grammars::DEBUG};})
+            },
+        );
+    }
+    else {
+        return (
+        qq{
+            (?{;Regexp::Grammars::_debug_trying(\@Regexp::Grammars::RESULT_STACK+$extra_pre_indent,
+              \$Regexp::Grammars::RESULT_STACK[-2+$extra_pre_indent], q{subpattern /$subpattern/})
+                if \$Regexp::Grammars::DEBUG_LEVEL{\$Regexp::Grammars::DEBUG};})
+            },
+        qq{
+            (?{;Regexp::Grammars::_debug_matched(\@Regexp::Grammars::RESULT_STACK+1,
+              \$Regexp::Grammars::RESULT_STACK[-1], q{subpattern /$subpattern/})
+                if \$Regexp::Grammars::DEBUG_LEVEL{\$Regexp::Grammars::DEBUG};})
+            },
+        );
+    }
+}
+
+
+#=====[ SUPPORT FOR AUTOMATIC TIMEOUTS ]=========================
+
+sub _test_timeout {
+    our ($DEBUG, $TIMEOUT);
+
+    return q{} if time() < $TIMEOUT->{'limit'};
+
+    my $duration = "$TIMEOUT->{duration} second"
+                 . ( $TIMEOUT->{duration} == 1 ? q{} : q{s} );
+
+    if (defined($DEBUG) && $DEBUG ne 'off') {
+        my $leader   = _debug_context(q{ });
+        say {*LOGFILE} $leader . '|';
+        say {*LOGFILE} $leader . "|...Invoking <timeout: $TIMEOUT->{duration}>";
+        say {*LOGFILE} $leader . "|   \\_____No match after $duration";
+        say {*LOGFILE} $leader . '|';
+        say {*LOGFILE} $leader . " \\FAIL <grammar>";
+    }
+
+    if (! @!) {
+        @! = "Internal error: Timed out after $duration (as requested)";
+    }
+    return q{(*COMMIT)(*FAIL)};
 }
 
 
@@ -687,6 +749,7 @@ my %CACHE; #...for subrule tracking
 my $PROLOGUE = q{((?{; @! = () if !pos;
                        local @Regexp::Grammars::RESULT_STACK
                            = (@Regexp::Grammars::RESULT_STACK, {});
+                       local $Regexp::Grammars::TIMEOUT = { limit => -1>>1 };
                        local $Regexp::Grammars::DEBUG = 'off' }) };
 
 # This code inserted at the end of every grammar regex
@@ -740,7 +803,7 @@ my $PARENS = qr{
 
 sub _uniq {
     my %seen;
-    return grep { !$seen{$_}++ } @_;
+    return grep { defined $_ && !$seen{$_}++ } @_;
 }
 
 # Default translator for error messages...
@@ -820,7 +883,7 @@ my %REPETITION_DESCRIPTION_FOR = (
 );
 
 sub _translate_raw_regex {
-    my ($regex, $debug_build) = @_;
+    my ($regex, $debug_build, $debug_runtime) = @_;
 
     my $is_comment =  substr($regex, 0, 1) eq q{#}
                    || substr($regex, 0, 3) eq q{(?#};
@@ -837,6 +900,12 @@ sub _translate_raw_regex {
         );
     }
 
+    return q{} if $is_comment;
+
+    # Generate run-time debugging code (if any)...
+    my ($debug_pre, $debug_post)
+        = _build_raw_debugging_statements($debug_runtime,$visible_regex, +1);
+
     # Replace negative lookahead with one that works under R::G...
     $regex =~ s{\(\?!}{(?!(?!)|}gxms;
     # ToDo: Also replace positive lookahead with one that works under R::G...
@@ -844,7 +913,9 @@ sub _translate_raw_regex {
     #           $regex =~ s{\(\?!}{(?!(?!)|(?!(?!)|}gxms;
     #       but need to find a way to insert the extra ) at the other end
 
-    return $is_comment ? q{} : $regex;
+    return $debug_runtime && $regex eq '|'   ?  $regex . $debug_post
+         : $debug_runtime && $regex =~ /\S/  ?  '(?:' .$debug_pre . $regex . $debug_post . ')'
+         :                                      $regex;
 }
 
 # Report and convert a debugging directive...
@@ -861,6 +932,27 @@ sub _translate_debug_directive {
     }
 
     return qq{(?{; local \$Regexp::Grammars::DEBUG = q{$cmd}; }) };
+}
+
+# Report and convert a timeout directive...
+sub _translate_timeout_directive {
+    my ($construct, $timeout, $debug_build) = @_;
+
+    # Report how directive was interpreted, if requested to...
+    if ($debug_build) {
+        _debug_notify( info =>
+            "   |",
+            "   |...Treating $construct as:",
+         ($timeout > 0
+          ? "   |       \\ Cause the entire parse to fail after $timeout second" .  ($timeout==1 ? q{} : q{s})
+          : "   |       \\ Cause the entire parse to fail immediately"
+         ),
+        );
+    }
+
+    return $timeout > 0
+            ? qq{(?{; local \$Regexp::Grammars::TIMEOUT = { duration => $timeout, limit => time() + $timeout }; }) }
+            : qq{(*COMMIT)(*FAIL)};
 }
 
 # Report and convert a <require:...> directive...
@@ -924,7 +1016,10 @@ sub _translate_error_directive {
     $subrule_name //= 'undef';
 
     # Determine severity...
-    my $severity = ($type eq 'error') ? 'fatal' : 'non-fatal';
+    my $severity = ($type eq 'error') ? 'fail' : 'non-fail';
+
+    # Determine fatality (and build code to invoke it)...
+    my $fatality = ($type eq 'fatal') ? '(*COMMIT)(*FAIL)' : q{};
 
     # Unpack message...
     if (substr($msg,0,3) eq '(?{') {
@@ -958,13 +1053,13 @@ sub _translate_error_directive {
                 @!,
                 Regexp::Grammars::_translate_errormsg($msg,q{$subrule_name},\$CONTEXT)
               ) }) (?!)|}
-        . ($severity eq 'fatal' ? q{(?!)} : q{})
+        . ($severity eq 'fail' ? q{(?!)} : $fatality)
         . q{)}
         ;
 }
 
 sub _translate_subpattern {
-    my ($construct, $alias, $subpattern, $savemode, $postmodifier, $debug_build, $debug_runtime, $backref)
+    my ($construct, $alias, $subpattern, $savemode, $postmodifier, $debug_build, $debug_runtime, $timeout, $backref)
         = @_;
 
     # Determine save behaviour...
@@ -1016,15 +1111,18 @@ sub _translate_subpattern {
             );}
         ;
 
+    # Generate timeout test...
+    my $timeout_test = $timeout ? q{(??{;Regexp::Grammars::_test_timeout()})} : q{};
+
     # Translate to standard regex code...
-    return qq{(?{;local \@Regexp::Grammars::RESULT_STACK
+    return qq{$timeout_test(?{;local \@Regexp::Grammars::RESULT_STACK
                     = \@Regexp::Grammars::RESULT_STACK;$debug_pre})
                 (?:($subpattern)(?{;$post_action$debug_post}))$postmodifier};
 }
 
 
 sub _translate_hashmatch {
-    my ($construct, $alias, $hashname, $keypat, $savemode, $postmodifier, $debug_build, $debug_runtime)
+    my ($construct, $alias, $hashname, $keypat, $savemode, $postmodifier, $debug_build, $debug_runtime, $timeout)
         = @_;
 
     # Empty or missing keypattern defaults to <.hk>...
@@ -1076,8 +1174,11 @@ sub _translate_hashmatch {
             );}
         ;
 
+    # Generate timeout test...
+    my $timeout_test = $timeout ? q{(??{;Regexp::Grammars::_test_timeout()})} : q{};
+
     # Translate to standard regex code...
-    return qq{(?:(?{;local \@Regexp::Grammars::RESULT_STACK
+    return qq{$timeout_test(?:(?{;local \@Regexp::Grammars::RESULT_STACK
                     = \@Regexp::Grammars::RESULT_STACK;$debug_pre})
                 (?:($keypat)(??{exists $hash_lookup ? q{} : q{(?!)}})(?{;$post_action$debug_post})))$postmodifier};
 }
@@ -1086,7 +1187,7 @@ sub _translate_hashmatch {
 # Convert a "<rule> ** <rule>" construct to pure Perl 5.10...
 sub _translate_separated_list {
     my ($term, $separator, $term_trans, $sep_trans,
-        $ws, $debug_build, $debug_runtime) = @_;
+        $ws, $debug_build, $debug_runtime, $timeout) = @_;
 
     # Translate meaningful whitespace...
     $ws = length($ws) ? q{(?&ws)} : q{};
@@ -1101,15 +1202,17 @@ sub _translate_separated_list {
         );
     }
 
+    # Generate timeout test...
+    my $timeout_test = $timeout ? q{(??{;Regexp::Grammars::_test_timeout()})} : q{};
+
     # Translate to list-matching pattern...
-    state $checkpoint
-        = q{(?{;@Regexp::Grammars::RESULT_STACK = @Regexp::Grammars::RESULT_STACK;})};
-    return qq{(?:$ws$checkpoint$sep_trans$ws$term_trans)*};
+    state $CHECKPOINT = q{(?{;@Regexp::Grammars::RESULT_STACK = @Regexp::Grammars::RESULT_STACK;})};
+    return qq{$timeout_test(?:$ws$CHECKPOINT$sep_trans$ws$term_trans)*};
 }
 
 sub _translate_subrule_call {
     my ( $grammar_name, $construct, $alias, $subrule, $args, $savemode, $postmodifier,
-         $debug_build, $debug_runtime, $valid_subrule_names_ref, $nocontext)
+         $debug_build, $debug_runtime, $timeout, $valid_subrule_names_ref, $nocontext)
         = @_;
 
     # Translate arg list, if provided...
@@ -1213,8 +1316,11 @@ sub _translate_subrule_call {
     my ($debug_pre, $debug_post)
         = _build_debugging_statements($debug_runtime, $construct);
 
+    # Generate timeout test...
+    my $timeout_test = $timeout ? q{(??{;Regexp::Grammars::_test_timeout()})} : q{};
+
     # Translate to standard regex code...
-    return qq{(?:(?{;
+    return qq{(?:$timeout_test(?{;
             local \@Regexp::Grammars::RESULT_STACK = (\@Regexp::Grammars::RESULT_STACK, {'\@'=>{$args}});
             \$Regexp::Grammars::RESULT_STACK[-2]{'~'} = $nocontext
                 if \@Regexp::Grammars::RESULT_STACK >= 2;
@@ -1260,6 +1366,7 @@ sub _translate_subrule_calls {
         $grammar_spec,
         $compiletime_debugging_requested,
         $runtime_debugging_requested,
+        $timeout_requested,
         $pre_match_debug,
         $post_match_debug,
         $rule_name,
@@ -1349,6 +1456,10 @@ sub _translate_subrule_calls {
                     debug \s* : \s* (?<cmd> run | match | step | try | off | on) \s*
             )
           |
+            (?<timeout_directive>
+                    timeout \s* : \s* (?<timeout> \d+) \s*
+            )
+          |
             (?<context_directive>
                     context \s* : \s*
             )
@@ -1364,11 +1475,11 @@ sub _translate_subrule_calls {
             )
           |
             (?<autoerror_directive>
-                    error \s*+ : \s*+
+                    (?<error_type> error | fatal ) \s*+ : \s*+
             )
           |
             (?<error_directive>
-                    (?<error_type> log | error | warning )
+                    (?<error_type> log | error | warning | fatal )
                     \s*+ : \s*+
                     (?<msg> (?&PARENCODE) | .+? )
                     \s*+
@@ -1380,7 +1491,7 @@ sub _translate_subrule_calls {
               \s++
             | \\.
             | \(\?!
-            | \(\?\# [^)]* \)
+            | \(\?\# [^)]* \)   # (?# -> old style inline comment)
             | (?&PARENCODE)
             | (?&PARENS)
             | (?&CHARSET)
@@ -1418,21 +1529,24 @@ sub _translate_subrule_calls {
                 my $pattern = substr($+{pattern},0,1) eq '(' ? $+{pattern} : "(?{$+{pattern}})";
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'scalar', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested, $timeout_requested,
                 );
             }
             elsif ($+{alias_parens_scalar_nocap}) {
                 my $pattern = substr($+{pattern},0,1) eq '(' ? $+{pattern} : "(?{$+{pattern}})";
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'noncapturing', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested, $timeout_requested,
                 );
             }
             elsif ($+{alias_parens_list}) {
                 my $pattern = substr($+{pattern},0,1) eq '(' ? $+{pattern} : "(?{$+{pattern}})";
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'list', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested, $timeout_requested,
                 );
             }
 
@@ -1440,19 +1554,25 @@ sub _translate_subrule_calls {
             elsif ($+{alias_hash_scalar}) {
                 _translate_hashmatch(
                     $curr_construct, $alias, $+{varname}, $+{keypat}, 'scalar', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested,
+                    $timeout_requested,
                 );
             }
             elsif ($+{alias_hash_scalar_nocap}) {
                 _translate_hashmatch(
                     $curr_construct, $alias, $+{varname}, $+{keypat}, 'noncapturing', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested,
+                    $timeout_requested,
                 );
             }
             elsif ($+{alias_hash_list}) {
                 _translate_hashmatch(
                     $curr_construct, $alias, $+{varname}, $+{keypat}, 'list', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested
+                    $compiletime_debugging_requested,
+                    $runtime_debugging_requested,
+                    $timeout_requested,
                 );
             }
 
@@ -1463,6 +1583,7 @@ sub _translate_subrule_calls {
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
+                    $timeout_requested,
                     $subrule_names_ref,
                     $nocontext,
                 );
@@ -1473,6 +1594,7 @@ sub _translate_subrule_calls {
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
+                    $timeout_requested,
                     $subrule_names_ref,
                     $nocontext,
                 );
@@ -1494,6 +1616,7 @@ sub _translate_subrule_calls {
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, $type, q{},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
+                    $timeout_requested,
                     $subrule_names_ref,
                     $nocontext,
                   )
@@ -1505,6 +1628,7 @@ sub _translate_subrule_calls {
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'noncapturing', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
+                    $timeout_requested,
                     $subrule_names_ref,
                     $nocontext,
                 );
@@ -1515,6 +1639,7 @@ sub _translate_subrule_calls {
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
+                    $timeout_requested,
                     $subrule_names_ref,
                     $nocontext,
                 );
@@ -1525,6 +1650,7 @@ sub _translate_subrule_calls {
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
                     $runtime_debugging_requested,
+                    $timeout_requested,
                     $subrule_names_ref,
                     $nocontext,
                 );
@@ -1535,7 +1661,7 @@ sub _translate_subrule_calls {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'scalar', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested,
+                    $compiletime_debugging_requested, $runtime_debugging_requested, $timeout_requested,
                     "in \$ARG{'$+{subrule}'}"
                 );
             }
@@ -1543,7 +1669,7 @@ sub _translate_subrule_calls {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'list', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested,
+                    $compiletime_debugging_requested, $runtime_debugging_requested, $timeout_requested,
                     "in \$ARG{'$+{subrule}'}"
                 );
             }
@@ -1553,7 +1679,7 @@ sub _translate_subrule_calls {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
                     $curr_construct, qq{'$+{subrule}'}, $pattern, 'noncapturing', $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested,
+                    $compiletime_debugging_requested, $runtime_debugging_requested, $timeout_requested,
                     "in \$ARG{'$+{subrule}'}"
                 );
             }
@@ -1578,7 +1704,7 @@ sub _translate_subrule_calls {
                          ;
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, $type, $+{modifier},
-                    $compiletime_debugging_requested, $runtime_debugging_requested,
+                    $compiletime_debugging_requested, $runtime_debugging_requested, $timeout_requested,
                     "in \$MATCH{'$subrule'}"
                 );
             }
@@ -1586,7 +1712,7 @@ sub _translate_subrule_calls {
         # Translate raw regexes (leave as is)...
             elsif ($+{raw_regex}) {
                 _translate_raw_regex(
-                    $+{raw_regex}, $compiletime_debugging_requested
+                    $+{raw_regex}, $compiletime_debugging_requested,
                 );
             }
 
@@ -1606,6 +1732,11 @@ sub _translate_subrule_calls {
                     $curr_construct, $+{cmd}, $compiletime_debugging_requested
                 );
             }
+            elsif ($+{timeout_directive}) {
+                _translate_timeout_directive(
+                    $curr_construct, $+{timeout}, $compiletime_debugging_requested
+                );
+            }
             elsif ($+{error_directive}) {
                 _translate_error_directive(
                     $curr_construct, $+{error_type}, $+{msg},
@@ -1614,7 +1745,7 @@ sub _translate_subrule_calls {
             }
             elsif ($+{autoerror_directive}) {
                 _translate_error_directive(
-                    $curr_construct, 'error', q{},
+                    $curr_construct, $+{error_type}, q{},
                     $compiletime_debugging_requested, $rule_name
                 );
             }
@@ -1637,7 +1768,7 @@ sub _translate_subrule_calls {
 
         # There shouldn't be any other possibility...
             else {
-                die qq{Internal error: this shouldn't happen!\nNear $curr_construct};
+                die qq{Internal error: this shouldn't happen!\nNear '$curr_construct': };
             }
         };
 
@@ -1648,7 +1779,8 @@ sub _translate_subrule_calls {
             $curr_translation = _translate_separated_list(
                 $prev_construct,   $curr_construct,
                 $prev_translation, $curr_translation, $ws,
-                $compiletime_debugging_requested, $runtime_debugging_requested
+                $compiletime_debugging_requested,
+                $runtime_debugging_requested, $timeout_requested,
             );
             $curr_construct = qq{$prev_construct ** $curr_construct};
         }
@@ -1821,9 +1953,14 @@ sub _build_grammar {
     $grammar_spec .= q{};
 
     # Check for dubious repeated <SUBRULE> constructs that throw away captures...
-    my @dubious
-        = $grammar_spec
-            =~ m{ < (?! \[ ) ( $IDENT (?: = [^>]*)? ) > \s* ([+*][?+]?|\{\d+(?:,\d*)?\}[?+]?) }gxms;
+    my @dubious = $grammar_spec =~ m{
+           < (?! \[ )                     # not <[SUBRULE]>
+             ( $IDENT (?: = [^>]*)? )     # but <SUBRULE> or <SUBRULE=*>
+           > \s* (                        # followed by a quantifier...
+             [+*][?+]?                    #    either symbolic
+           | \{\d+(?:,\d*)?\}[?+]?        #    or numeric
+           )
+    }gxms;
 
     # Report dubiousities...
     while (@dubious) {
@@ -1867,13 +2004,20 @@ sub _build_grammar {
         q{};
     }gexms;
 
-    # Look ahead for any run-time debugging requests...
+    # Look ahead for any run-time debugging or timeout requests...
     my $runtime_debugging_requested
         = $grammar_spec =~ m{
               ^ [^#]*
               < debug: \s* (run | match | step | try | on | off | same ) \s* >
             | \$DEBUG (?! \s* (?: \[ | \{) )
         }xms;
+
+    my $timeout_requested
+        = $grammar_spec =~ m{
+              ^ [^#]*
+              < timeout: \s* \d+ \s* >
+        }xms;
+
 
     # Standard actions set up and clean up any regex debugging...
     # Before entire match, set up a stack of attempt records and report...
@@ -1930,7 +2074,7 @@ sub _build_grammar {
 
     # An empty main rule will never match anything...
     my $main_regex = shift @defns;
-    if ($main_regex =~ m{\A (?: \s++ | \# [^\n]++ )* \z}xms) {
+    if ($main_regex =~ m{\A (?: \s++ | \(\?\# [^)]* \) | \# [^\n]++ )* \z}xms) {
         _debug_notify( error =>
             "No main regex specified before rule definitions.",
             "Grammar will never match anything.",
@@ -1978,7 +2122,15 @@ sub _build_grammar {
     @subrule_names{ keys %{$inherited_subrule_names} }
         = values %{$inherited_subrule_names};
 
+    # Remove comments from top-level grammar...
+    $main_regex =~ s{
+          \(\?\# [^)]* \)
+        | (?<! \\ ) [#] [^\n]+
+    }{}gxms;
+
     # Remove any top-level nocontext directive...
+                    # 1 2     3     4
+    $main_regex =~ s{^( (.*?) (\\*) (\# [^\n]*) )$}{length($3) % 2 ? $1 : $2.substr($3,0,-1)}gexms;
     my $nocontext = ($main_regex =~ s{ < nocontext \s* : \s* > }{}gxms) ? 1
                   : ($main_regex =~ s{ <   context \s* : \s* > }{}gxms) ? 0
                   :                                                       0;
@@ -2000,7 +2152,6 @@ sub _build_grammar {
         $main_regex =~ s{
             $GRAMMAR_DIRECTIVE
           | < debug: \s* (run | match | step | try | on | off | same ) \s* >
-          | [#] [^\n]+
         }{}gxms;
 
         # Check for anything else in the main regex...
@@ -2016,8 +2167,8 @@ sub _build_grammar {
         # Remember set of valid subrule names...
         $subrule_names_for{$grammar_name}
             = {
-                map({ ($_ => 1) } keys %subrule_names), 
-                map({ ($grammar_name.'::'.$_ => 1) } grep { !/::/ } keys %subrule_names), 
+                map({ ($_ => 1) } keys %subrule_names),
+                map({ ($grammar_name.'::'.$_ => 1) } grep { !/::/ } keys %subrule_names),
               };
     }
     else { #...not a grammar specification
@@ -2034,6 +2185,7 @@ sub _build_grammar {
             $main_regex,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
+            $timeout_requested,
             $pre_match_debug,
             $post_match_debug,
             q{},                        # Expected...what?
@@ -2073,6 +2225,7 @@ sub _build_grammar {
             $body,
             $compiletime_debugging_requested,
             $runtime_debugging_requested,
+            $timeout_requested,
             $pre_match_debug,
             $post_match_debug,
             $callname,                # Expected...what?
@@ -2189,7 +2342,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.012
+This document describes Regexp::Grammars version 1.013
 
 
 =head1 SYNOPSIS
@@ -2337,15 +2490,18 @@ This document describes Regexp::Grammars version 1.012
 
 =head2 Directives...
 
-    <require: (?{ CODE })>   Fail if code evaluates false
-    <debug: COMMAND >        Change match-time debugging mode
-    <error: TEXT|CODEBLOCK>  Queue text or value as an error message
-    <logfile: LOGFILE>       Change debugging log file (default: STDERR)
-    <log: (?{ CODE })  >     Explicitly add a message to the log
-    <minimize:>              Simplify the result of a subrule match
-    <ws: PATTERN >           Override automatic whitespace matching
-    <context:>               Switch on context substring retention
-    <nocontext:>             Switch off context substring retention
+    <require: (?{ CODE })   >  Fail if code evaluates false
+    <timeout: INT           >  Fail if matching takes too long
+    <debug:   COMMAND       >  Change match-time debugging mode
+    <logfile: LOGFILE       >  Change debugging log file (default: STDERR)
+    <fatal:   TEXT|(?{CODE})>  Queue error message and fail parse
+    <error:   TEXT|(?{CODE})>  Queue error message and backtrack
+    <warning: TEXT|(?{CODE})>  Queue warning message and continue
+    <log:     TEXT|(?{CODE})>  Explicitly add a message to debugging log
+    <ws:      PATTERN       >  Override automatic whitespace matching
+    <minimize:>                Simplify the result of a subrule match
+    <context:>                 Switch on context substring retention
+    <nocontext:>               Switch off context substring retention
 
 
 
@@ -2623,7 +2779,7 @@ and another within statements, you could parse it with:
         <[statement]> ** ( ; )
 
 
-    <rule: statement> 
+    <rule: statement>
         # Another type of comment...
         <ws: (\s*+ | \#{ .*? }\# )* >
 
@@ -2979,7 +3135,7 @@ tags, like so:
 
 
 Note that, if you do not need to interpolate values (such as
-C<$MATCH{tag}>) into a subrule's argument list, you can 
+C<$MATCH{tag}>) into a subrule's argument list, you can
 use simple parentheses instead of C<(?{...})>, like so:
 
         <end_tag( prefix=>'end', tag=>'head' )>
@@ -3039,19 +3195,19 @@ A subrule call of the form C<< <\: >>I<identifier>C<< > >>
 (that is: a L<matchref|"Rematching subrule results">
 with a colon after the backslash) is equivalent to:
 
-    (??{ defined $ARG{'identifier'} 
+    (??{ defined $ARG{'identifier'}
             ? quotemeta($ARG{'identifier'})
             : '(?!)'
     })
 
-Namely: I<"Match the contents of C<$ARG{'identifier'}>, 
+Namely: I<"Match the contents of C<$ARG{'identifier'}>,
 treating those contents as a literal.">
 
 A subrule call of the form C<< </: >>I<identifier>C<< > >>
 (that is: an L<invertref|"Rematching balanced delimiters">
 with a colon after the forward slash) is equivalent to:
 
-    (??{ defined $ARG{'identifier'} 
+    (??{ defined $ARG{'identifier'}
             ? quotemeta(reverse $ARG{'identifier'})
             : '(?!)'
     })
@@ -3466,7 +3622,7 @@ match shell-like control blocks:
         | with  <expr> <[command]>+ endwith
 
 This would be much tidier if we could factor out the command names
-(which are the only differences between the four alternatives). The 
+(which are the only differences between the four alternatives). The
 problem is that the obvious solution:
 
     <rule: control_block>
@@ -3476,7 +3632,7 @@ problem is that the obvious solution:
 
 doesn't work, because it would also match an incorrect input like:
 
-    for 1..10 
+    for 1..10
         echo $n
         ls subdir/$n
     endif
@@ -3516,7 +3672,7 @@ can have it do so by giving it an alias:
 
 At first glance this doesn't seem very useful as, by definition,
 C<$MATCH{ldelim}> and C<$MATCH{rdelim}> must necessarily
-always end up with identical values. However, it can be useful 
+always end up with identical values. However, it can be useful
 if the rule also has other alternatives and you want to create a
 consistent internal representation for those alternatives, like so:
 
@@ -4226,22 +4382,12 @@ grammar. Such a calculator might look like this:
             <Answer>
 
             <rule: Answer>
-                <X=Mult> \+ <Y=Answer>
-                    <MATCH= (?{ $MATCH{X} + $MATCH{Y} })>
-              | <X=Mult> - <Y=Answer>
-                    <MATCH= (?{ $MATCH{X} - $MATCH{Y} })>
-              |
-                    <MATCH=Mult>
+                ( <.Mult> ** <.Op=([+-])> )
+                    <MATCH= (?{ eval $CAPTURE })>
 
             <rule: Mult>
-                <X=Pow> \* <Y=Mult>
-                    <MATCH= (?{ $MATCH{X} * $MATCH{Y} })>
-              | <X=Pow>  / <Y=Mult>
-                    <MATCH= (?{ $MATCH{X} / $MATCH{Y} })>
-              | <X=Pow>  % <Y=Mult>
-                    <MATCH= (?{ $MATCH{X} % $MATCH{Y} })>
-              |
-                    <MATCH=Pow>
+                ( <.Pow> ** <.Op=([*/%])> )
+                    <MATCH= (?{ eval $CAPTURE })>
 
             <rule: Pow>
                 <X=Term> \^ <Y=Pow>
@@ -4401,6 +4547,67 @@ You can freely mix object-returning and plain-old-hash-returning rules
 and tokens within a single grammar, though you have to be careful not to
 subsequently try to call a method on any of the unblessed nodes.
 
+=head4 An important caveat regarding OO rules
+
+Prior to Perl 5.14.0, Perl's regex engine was not fully re-entrant.
+This means that in older versions of Perl, it is not possible to
+re-invoke the regex engine when already inside the regex engine.
+
+This means that you need to be careful that the C<new()>
+constructors that are called by your object-rules do not themselves
+use regexes in any way, unless you're running under Perl 5.14 or later
+(in which case you can ignore what follows).
+
+The two ways this is most likely to happen are:
+
+=over
+
+=item 1.
+
+If you're using a class built on Moose, where one or more of the C<has>
+uses a type constraint (such as C<'Int'>) that is implemented via regex
+matching. For example:
+
+    has 'id' => (is => 'rw', isa => 'Int');
+
+The workaround (for pre-5.14 Perls) is to replace the type
+constraint with one that doesn't use a regex. For example:
+
+    has 'id' => (is => 'rw', isa => 'Num');
+
+Alternatively, you could define your own type constraint that
+avoids regexes:
+
+    use Moose::Util::TypeConstraints;
+
+    subtype 'Non::Regex::Int',
+         as 'Num',
+      where { int($_) == $_ };
+
+    no Moose::Util::TypeConstraints;
+
+    # and later...
+
+    has 'id' => (is => 'rw', isa => 'Non::Regex::Int');
+
+=item 2.
+
+If your class uses an C<AUTOLOAD()> method to implement its constructor
+and that method uses the typical:
+
+    $AUTOLOAD =~ s/.*://;
+
+technique. The workaround here is to achieve the same effect without a
+regex. For example:
+
+    my $last_colon_pos = rindex($AUTOLOAD, ':');
+    substr $AUTOLOAD, 0, $last_colon_pos+1, q{};
+
+=back
+
+Note that this caveat against using nested regexes also applies to any
+code blocks executed inside a rule or token (whether or not those rules
+or tokens are object-oriented).
 
 =head3 A naming shortcut
 
@@ -5043,6 +5250,133 @@ inside other regexes are extremely problematical (i.e. almost always
 disastrous) in Perl.
 
 
+=head2 Restricting how long a parse runs
+
+Like the core Perl 5 regex engine on which they are built, the grammars
+implemented by Regexp::Grammars are essentially top-down parsers. This
+means that they may occasionally require an exponentially long time to
+parse a particular input. This usually occurs if a particular grammar
+includes a lot of recursion or nested backtracking, especially if the
+grammar is then matched against a long string.
+
+The judicious use of non-backtracking repetitions (i.e. C<x*+> and
+C<x++>) can significantly improve parsing performance in many such
+cases. Likewise, carefully reordering any high-level alternatives
+(so as to test simple common cases first) can substantially reduce
+parsing times.
+
+However, some languages are just intrinsically slow to parse using
+top-down techniques (or, at least, may have slow-to-parse corner cases).
+
+To help cope with this constraint, Regexp::Grammars provides a mechanism
+by which you can limit the total effort that a given grammar will expend
+in attempting to match. The C<< <timeout:...> >> directive allows you
+to specify how long a grammar is allowed to continue trying to match
+before giving up. It expects a single argument, which must be an
+unsigned integer, and it treats this integer as the number of seconds
+to continue attempting to match.
+
+For example:
+
+    <timeout: 10>
+
+indicates that the grammar should keep attempting to match for another
+10 seconds from the point where the directive is encountered during a
+parse. If the complete grammar has not matched in that time, the entire
+match is considered to have failed, the matching process is immediately
+terminated, and a standard error message
+(C<'Internal error: Timed out after 10 seconds (as requested)'>)
+is returned in C<@!>.
+
+A C<< <timeout:...> >> directive can be placed anywhere in a grammar,
+but is most usually placed at the very start, so that the entire grammar
+is governed by the specified time limit. The second most common alternative
+is to place the timeout at the start of a particular subrule that is known
+to be potentially very slow.
+
+A common mistake is to put the timeout specification at the top level
+of the grammar, but place it I<after> the actual subrule to be matched,
+like so:
+
+    my $grammar = qr{
+
+        <Text_Corpus>      # Subrule to be matched
+        <timeout: 10>      # Useless use of timeout
+
+        <rule: Text_Corpus>
+            # et cetera...
+    }xms;
+
+Since the parser will only reach the C<< <timeout: 10> >> directive
+I<after> it has completely matched C<< <Text_Corpus> >>, the timeout is
+only initiated at the very end of the matching process and so does not
+limit that process in any useful way.
+
+
+=head3 Immediate timeouts
+
+As you might expect, a C<< <timeout: 0> >> directive tells the parser to
+keep trying for only zero more seconds, and therefore will immediately
+cause the entire surrounding grammar to fail (no matter how deeply
+within that grammar the directive is encountered).
+
+This can occasionally be exteremely useful. If you know that detecting a
+particular datum means that the grammar will never match, no matter how
+many other alternatives may subsequently be tried, you can short-circuit
+the parser by injecting a C<< <timeout: 0> >> immediately after the
+offending datum is detected.
+
+For example, if your grammar only accepts certain versions of the
+language being parsed, you could write:
+
+    <rule: Valid_Language_Version>
+            vers = <%AcceptableVersions>
+        |
+            vers = <bad_version=(\S++)>
+            <warning: (?{ "Cannot parse language version $MATCH{bad_version}" })>
+            <timeout: 0>
+
+In fact, this C<< <warning: MSG> <timeout: 0> >> sequence
+is sufficiently useful, sufficiently complex, and sufficiently easy
+to get wrong, that Regexp::Grammars provides a handy shortcut for it:
+the C<< <fatal:...> >> directive. A C<< <fatal:...> >> is exactly
+equivalent to a C<< <warning:...> >> followed by a zero-timeout,
+so the previous example could also be written:
+
+    <rule: Valid_Language_Version>
+            vers = <%AcceptableVersions>
+        |
+            vers = <bad_version=(\S++)>
+            <fatal: (?{ "Cannot parse language version $MATCH{bad_version}" })>
+
+Like C<< <error:...> >> and C<< <warning:...> >>, C<< <fatal:...> >> also
+provides its own failure context in C<$CONTEXT>, so the previous example
+could be further simplified to:
+
+    <rule: Valid_Language_Version>
+            vers = <%AcceptableVersions>
+        |
+            vers = <fatal:(?{ "Cannot parse language version $CONTEXT" })>
+
+Also like C<< <error:...> >>, C<< <fatal:...> >> can autogenerate an
+error message if none is provided, so the example could be still further
+reduced to:
+
+    <rule: Valid_Language_Version>
+            vers = <%AcceptableVersions>
+        |
+            vers = <fatal:>
+
+In this last case, however, the error message returned in C<@!> would no
+longer be:
+
+    Cannot parse language version 0.95
+
+It would now be:
+
+    Expected valid language version, but found '0.95' instead
+
+
 =head1 Scoping considerations
 
 If you intend to use a grammar as part of a larger program that contains
@@ -5157,8 +5491,18 @@ that point and starts backtracking.
 =item C<< <error: > >>
 
 This directive queues a I<conditional> error message within C<@!> and
-then fails to match (that is, it is equivalent to a C<(?!)> when
-matching).
+then fails to match at that point (that is, it is equivalent to a
+C<(?!)> or C<(*FAIL)> when matching).
+
+=item C<< <fatal: (?{ CODE })  > >>
+
+=item C<< <fatal: LITERAL TEXT > >>
+
+=item C<< <fatal: > >>
+
+This directive is exactly the same as an C<< <error:...> >> in every
+respect except that it immediately causes the entire surrounding
+grammar to fail, and parsing to immediate cease.
 
 =item C<< <warning: (?{ CODE })  > >>
 
@@ -5168,6 +5512,7 @@ This directive is exactly the same as an C<< <error:...> >> in every
 respect except that it does not induce a failure to match at the point
 it appears. That is, it is equivalent to a C<(?=)> ["succeed and
 continue matching"], rather than a C<(?!)> ["fail and backtrack"].
+
 
 
 =item C<< <debug: COMMAND > >>
@@ -5222,6 +5567,12 @@ message.
 If the block returns two or more values, the first is treated as a log
 message severity indicator, and the remaining values as separate lines
 of text to be logged.
+
+=item C<< <timeout: INT > >>
+
+Restrict the match-time of the parse to the specified number of seconds.
+Queues a error message and terminates the entire match process
+if the parse does not complete within the nominated time limit.
 
 =back
 
@@ -5445,7 +5796,7 @@ The Perl 5 regex engine is not reentrant. So any attempt to perform
 a regex match inside a C<(?{ ... })> or C<(??{ ... })> will almost
 certainly lead to either weird data corruption or a segfault.
 
-The same calamities can also occur in any constructor called by 
+The same calamities can also occur in any constructor called by
 C<< <objrule:> >>. If the constructor invokes another regex in any
 way, it will most likely fail catastrophically. In particular, this
 means that Moose constructors will frequently crash and burn within
@@ -5697,7 +6048,7 @@ or:
 
 You specified a C<< <logfile:...> >> directive but the
 file whose name you specified could not be opened for
-writing (for the reason given in the parens). 
+writing (for the reason given in the parens).
 
 Did you misspell the filename, or get the permissions wrong
 somewhere in the filepath?

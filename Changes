@@ -151,3 +151,22 @@ Revision history for Regexp-Grammars
       (grammars now fully polymorphic)
 
     * Added NEXT:: namespace for generic polymorphism
+
+
+1.013  Wed Jun 29 14:39:40 2011
+
+    * Improved in-doc calculator example (thanks Jake!)
+
+    * Improved RFC5322 example (thanks Tom and Abigail)
+
+    * Added <timeout:...> directive (thanks Dan)
+
+    * Added <fatal:...> directive
+
+    * Added better compile-time debugging of standard Perl subpatterns
+
+    * Added documentation of problems when using objrules
+      whose ctors re-invoke the regex engine (thanks Nathan)
+
+    * Added new tests for objrules whose classes are based
+      on Moose or autoloading (thanks Nathan!)

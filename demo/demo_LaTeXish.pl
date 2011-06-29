@@ -193,6 +193,6 @@ __DATA__
 \maketitle
 \tableofcontents
 \section{Description}
-...is easy \footnote{But not\\ \emph{necessarily} simple}.
+...is easy\footnote{But not\\ \emph{necessarily} simple}.
 In fact it's $easy_peasy^2$ to do.
 \end{document}

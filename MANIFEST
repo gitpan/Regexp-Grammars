@@ -60,4 +60,13 @@ t/grammar_polymorphism.t
 t/no_context.t
 t/no_context_counterlocal.t
 t/no_context_local.t
+t/class_accessor.t
+t/fatal.t
+t/moose.t
+t/new.t
+t/new_init.t
+t/new_init_autoload.t
+t/new_init_limited_autoload.t
+t/new_init_limited_autoload_warn.t
+t/timeout.t
 META.yml                                 Module meta-data (added by MakeMaker)

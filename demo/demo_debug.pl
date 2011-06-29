@@ -4,7 +4,7 @@ use warnings;
     use Regexp::Grammars;
 
     my $balanced_brackets = qr{
-#        <debug:step>
+        <debug:step>
 
         <left_delim=(  \( )>
         (?:

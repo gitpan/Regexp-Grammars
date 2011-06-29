@@ -5,11 +5,11 @@ use Test::More 'no_plan';
 my $parser = do{
     use Regexp::Grammars;
     qr{
-        <test>         (?# <notarule> )
+        ^ <test> $   (?# <notarule> )
 
         <rule: test>
             a test     # some <other> here
-    }xms
+    }xms;
 };
 
 my $target = q{a test};
