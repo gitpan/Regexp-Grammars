@@ -23,7 +23,7 @@ my $calculator = do{
           | <MATCH=Pow>
 
         <rule: Pow>
-            <[Term]> ** \^
+            <[Term]>+ % \^
                 (?{
                     $MATCH = 1;
                     $MATCH = $_ ** $MATCH for reverse @{$MATCH{Term}};

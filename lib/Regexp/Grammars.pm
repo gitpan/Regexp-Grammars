@@ -7,7 +7,8 @@ use 5.010;
 use Scalar::Util qw< blessed >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.013';
+our $VERSION = '1.014';
+
 
 # Load the module...
 sub import {
@@ -22,7 +23,7 @@ sub import {
 
             # In active scope and really a regex...
             if (_module_is_active() && $type =~ /qq?/) {
-                return bless \$raw, 'Regexp::Grammars::Precursor';
+                return bless \$cooked, 'Regexp::Grammars::Precursor';
             }
             # Ignore everything else...
             else {
@@ -272,8 +273,9 @@ sub _debug_interact {
 
     # Only interact with terminals, and if debug level is appropriate...
     if (-t *Regexp::Grammars::LOGFILE
-    && defined $DEBUG
-    && ($DEBUG_LEVEL{$DEBUG}//0) >= $DEBUG_LEVEL{$min_debug_level}) {
+    &&  defined $DEBUG
+    &&  ($DEBUG_LEVEL{$DEBUG}//0) >= $DEBUG_LEVEL{$min_debug_level}
+    ) {
         local $/ = "\n";  # ...in case some caller is being clever
         INPUT:
         while (1) {
@@ -1184,30 +1186,67 @@ sub _translate_hashmatch {
 }
 
 
-# Convert a "<rule> ** <rule>" construct to pure Perl 5.10...
+# Convert a "<rule><qualifier> % <rule>" construct to pure Perl 5.10...
 sub _translate_separated_list {
-    my ($term, $separator, $term_trans, $sep_trans,
+    my ($term, $op, $separator, $term_trans, $sep_trans,
         $ws, $debug_build, $debug_runtime, $timeout) = @_;
+
+    # This insertion ensures backtracking upwinds the stack correctly...
+    state $CHECKPOINT = q{(?{;@Regexp::Grammars::RESULT_STACK = @Regexp::Grammars::RESULT_STACK;})};
 
     # Translate meaningful whitespace...
     $ws = length($ws) ? q{(?&ws)} : q{};
+
+    # Generate timeout test...
+    my $timeout_test = $timeout ? q{(??{;Regexp::Grammars::_test_timeout()})} : q{};
 
     # Report how construct was interpreted, if requested to...
     if ($debug_build) {
         _debug_notify( info =>
             "   |",
-            "   |...Treating $term ** $separator as:",
+            "   |...Treating $term $op $separator as:",
             "   |      |  repeatedly match the subrule $term",
             "   |       \\ as long as the matches are separated by matches of $separator",
         );
     }
 
-    # Generate timeout test...
-    my $timeout_test = $timeout ? q{(??{;Regexp::Grammars::_test_timeout()})} : q{};
+    #  One-or-more...
+    return qq{$timeout_test(?:$ws$CHECKPOINT$sep_trans$ws$term_trans)*$+}
+        if $op =~ m{ [*][*]() | [+]([+?]?) \s* % | \{ 1, \}([+?]?) \s* % }xms;
 
-    # Translate to list-matching pattern...
-    state $CHECKPOINT = q{(?{;@Regexp::Grammars::RESULT_STACK = @Regexp::Grammars::RESULT_STACK;})};
-    return qq{$timeout_test(?:$ws$CHECKPOINT$sep_trans$ws$term_trans)*};
+    #  Zero-or-more...
+    return qq{{0}$timeout_test$ws(?:$term_trans(?:$ws$CHECKPOINT$sep_trans$ws$term_trans)*$+)?$+}
+        if $op =~ m{ [*]([+?]?) \s* % | \{ 0, \}([+?]?) \s* % }xms;
+
+    #  One-or-zero...
+    return qq{?$+}
+        if $op =~ m{ [?]([+?]?) \s* % | \{ 0,1 \}([+?]?) \s* % }xms;
+
+    #  Zero exactly...
+    return qq{{0}$ws}
+        if $op =~ m{ \{ 0 \}[+?]? \s* % }xms;
+
+    #  N exactly...
+    if ($op =~ m{ \{ (\d+) \}([+?]?) \s* % }xms ) {
+        my $min = $1-1;
+        return qq{{0}$timeout_test$ws(?:$term_trans(?:$ws$CHECKPOINT$sep_trans$ws$term_trans){$min}$+)}
+    }
+
+    #  Zero-to-N...
+    if ($op =~ m{ \{ 0,(\d+) \}([+?]?) \s* % }xms ) {
+        my $max = $1-1;
+        return qq{{0}$timeout_test$ws(?:$term_trans(?:$ws$CHECKPOINT$sep_trans$ws$term_trans){0,$max}$+)?$+}
+    }
+
+    #  M-to-N and M-to-whatever...
+    if ($op =~ m{ \{ (\d+),(\d*) \} ([+?]?) \s* % }xms ) {
+        my $min = $1-1;
+        my $max = $2 ? $2-1 : q{};
+        return qq{{0}$timeout_test$ws(?:$term_trans(?:$ws$CHECKPOINT$sep_trans$ws$term_trans){$min,$max}$+)}
+    }
+
+    # Somehow we missed a case (this should never happen)...
+    die "Internal error: missing case in separated list handler";
 }
 
 sub _translate_subrule_call {
@@ -1375,13 +1414,13 @@ sub _translate_subrule_calls {
         $nocontext,
     ) = @_;
 
-    # Remember the preceding construct, so as to implement the ** operator...
+    # Remember the preceding construct, so as to implement the +% etc. operators...
     my $prev_construct   = q{};
     my $prev_translation = q{};
 
     # Translate all other calls (MAIN GRAMMAR FOR MODULE)...
     $grammar_spec =~ s{
-      (?<list_marker> (?<ws1> \s*+)  \*\* (?<ws2> \s*+) )?
+      (?<list_marker> (?<ws1> \s*+)  (?<op> (?&SEPLIST_OP) ) (?<ws2> \s*+) )?
       (?<construct>
         <
         (?:
@@ -1485,7 +1524,7 @@ sub _translate_subrule_calls {
                     \s*+
             )
         )
-        > (?<modifier> \s* (?! \*\* ) [?+*][?+]? | )
+        > (?<modifier> \s* (?! (?&SEPLIST_OP) ) [?+*][?+]? | )
       |
         (?<raw_regex>
               \s++
@@ -1501,6 +1540,7 @@ sub _translate_subrule_calls {
     )
 
     (?(DEFINE)
+        (?<SEPLIST_OP> \*\* | [*+?][+?]?\s*% | {\d+(,\d*)?}[+?]?\s*%                                                )
         (?<PARENS>    \(     (?: \\. | (?&PARENCODE) | (?&PARENS) | (?&CHARSET) | [^][()\\<>]++ )*+ \)   )
         (?<BRACES>    \{     (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}   )
         (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}\) )
@@ -1772,17 +1812,18 @@ sub _translate_subrule_calls {
             }
         };
 
-        # Handle the ** operator...
+        # Handle the **/*%/+%/{n,m}%/etc operators...
         if ($+{list_marker}) {
             my $ws = $magic_ws ? $+{ws1} . $+{ws2} : q{};
+            my $op = $+{op};
 
             $curr_translation = _translate_separated_list(
-                $prev_construct,   $curr_construct,
+                $prev_construct,   $op, $curr_construct,
                 $prev_translation, $curr_translation, $ws,
                 $compiletime_debugging_requested,
                 $runtime_debugging_requested, $timeout_requested,
             );
-            $curr_construct = qq{$prev_construct ** $curr_construct};
+            $curr_construct = qq{$prev_construct $op $curr_construct};
         }
 
         # Finally, remember this latest translation, and return it...
@@ -2342,7 +2383,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.013
+This document describes Regexp::Grammars version 1.014
 
 
 =head1 SYNOPSIS
@@ -2474,7 +2515,11 @@ This document describes Regexp::Grammars version 1.013
     <[SUBRULE]>              Call subrule (one of the above forms), but
                              append result instead of overwriting it
 
-    <SUBRULE1> ** <SUBRULE2> Match one or more repetitions of SUBRULE1
+    <SUBRULE1>+ % <SUBRULE2> Match one or more repetitions of SUBRULE1
+                             as long as they're separated by SUBRULE2
+    <SUBRULE1> ** <SUBRULE2> Same (only for backwards compatibility)
+
+    <SUBRULE1>* % <SUBRULE2> Match zero or more repetitions of SUBRULE1
                              as long as they're separated by SUBRULE2
 
 
@@ -2572,7 +2617,7 @@ For example, the above LaTeX matcher could be converted to a full LaTeX parser
 
         <rule: Command>    \\  <Literal>  <Options>?  <Args>?
 
-        <rule: Options>    \[  <[Option]> ** (,)  \]
+        <rule: Options>    \[  <[Option]>+ % (,)  \]
 
         <rule: Args>       \{  <[Element]>*  \}
 
@@ -2776,7 +2821,7 @@ and another within statements, you could parse it with:
         <ws: (\s++ | \# .*? \n)* >
 
         # ...colon-separated statements...
-        <[statement]> ** ( ; )
+        <[statement]>+ % ( ; )
 
 
     <rule: statement>
@@ -2784,7 +2829,7 @@ and another within statements, you could parse it with:
         <ws: (\s*+ | \#{ .*? }\# )* >
 
         # ...between comma-separated commands...
-        <cmd>  <[arg]> ** ( , )
+        <cmd>  <[arg]>+ % ( , )
 
 
 Note that each directive only applies to the rule in which it is
@@ -2937,7 +2982,7 @@ This means that this grammar:
 
         <rule: Command>
             <nocontext:>
-            <Keyword> <arg=(\S+)> ** <.ws>
+            <Keyword> <arg=(\S+)>+ % <.ws>
 
         <token: Keyword>
             <Move> | <Copy> | <Delete>
@@ -2952,7 +2997,7 @@ and this grammar:
         <Command>
 
         <rule: Command>
-            <Keyword> <arg=(\S+)> ** <.ws>
+            <Keyword> <arg=(\S+)>+ % <.ws>
 
         <token: Keyword>
             <context:>
@@ -3451,7 +3496,7 @@ length, in which items are separated by a fixed token. Things like:
 
     1, 2, 3 , 4 ,13, 91        # Numbers separated by commas and spaces
 
-    g-c-a-g-t-t-a-c-a          # Bases separated by dashes
+    g-c-a-g-t-t-a-c-a          # DNA bases separated by dashes
 
     /usr/local/bin             # Names separated by directory markers
 
@@ -3461,72 +3506,160 @@ The usual construct required to parse these kinds of structures is either:
 
     <rule: list>
 
-        <item> <separator> <list>              # recursive definition
-      | <item>                                 # base case
+        <item> <separator> <list>     # recursive definition
+      | <item>                        # base case
+
+or, if you want to allow zero-or-more items instead of requiring one-or-more:
+
+    <rule: list_opt>
+        <list>?                       # entire list may be missing
+
+    <rule: list>                      # as before...
+        <item> <separator> <list>     #   recursive definition
+      | <item>                        #   base case
+
 
 Or, more efficiently, but less prettily:
 
     <rule: list>
+        <[item]> (?: <separator> <[item]> )*           # one-or-more
 
-        <[item]> (?: <separator> <[item]> )*   # iterative definition
+    <rule: list_opt>
+        (?: <[item]> (?: <separator> <[item]> )* )?    # zero-or-more
 
-Because this is such a common requirement, Regexp::Grammars provides a cleaner
-way to specify the iterative version. The syntax is taken from Perl 6:
+Because separated lists are such a common component of grammars,
+Regexp::Grammars provides cleaner ways to specify them:
 
     <rule: list>
+        <[item]>+ % <separator>      # one-or-more
 
-        <[item]> ** <separator>                # iterative definition
+    <rule: list_zom>
+        <[item]>* % <separator>      # zero-or-more
 
-This is a repetition specifier on the first subrule (hence the use of C<**>
-as the marker, to reflect the repetitive behaviour of C<*>). However, the
-number of repetitions is controlled by the second subrule: the first subrule
-will be repeatedly matched for as long as the second subrule matches
-immediately after it.
+Note that these are just regular repetition qualifiers (i.e. C<+>
+and C<*>) applied to a subriule (C<< <[item]> >>), with a C<%>
+modifier after them to specify the required separator between the
+repeated matches.
 
-So, for example, you can match a sequence of numbers separated by commas with:
+The number of repetitions matched is controlled both by the nature of
+the qualifier (C<+> vs C<*>) and by the subrule specified after the C<%>.
+The qualified subrule will be repeatedly matched
+for as long as its qualifier allows, provided that the second subrule
+also matches I<between> those repetitions.
 
-    <[number]> ** <comma>
+For example, you can match a parenthesized sequence of one-or-more
+numbers separated by commas, such as:
+
+    (1, 2, 3, 4, 13, 91)        # Numbers separated by commas (and spaces)
+
+with:
+
+    <rule: number_list>
+
+        \(  <[number]>+ % <comma>  \)
 
     <token: number>  \d+
-    <token: comma>   \s* , \s*
+    <token: comma>   ,
 
-Note that it's important to use the C<< <[...]> >> form for the items being
-matched, so that all of them are saved in the result hash. You can also save
-all the separators (if that's important):
+Note that any spaces round the commas will be ignored because
+C<< <number_list> >> is specified as a rule and the C<+%> specifier
+has spaces within and around it. To disallow spaces around the commas,
+make sure there are no spaces in or around the C<+%>:
 
-    <[number]> ** <[comma]>
+    <rule: number_list_no_spaces>
 
-The repeated item I<must> be specified as a subrule call of some
-kind, but the separators may be specified either as a subrule or a
-bracketed pattern. For example:
+        \( <[number]>+%<comma> \)
 
-    <[number]> ** ( , | : )
+(or else specify the rule as a token instead).
 
-    <[number]> ** [,:]
+Because the C<%> is a modifier applied to a qualifier, you can modify
+I<any> other repetition qualifier in the same way. For example:
 
-The separator should always be specified in matched delimiters of some
-kind: either matching C<< <...> >> or matching C<(...)> or matching
+    <[item]>{2,4} % <sep>   # two-to-four items, separated
+
+    <[item]>{7}   % <sep>   # exactly 7 items, separated
+
+    <[item]>{10,}? % <sep>   # minimum of 10 or more items, separated
+
+You can even do this:
+
+    <[item]>? % <sep>       # one-or-zero items, (theoretically) separated
+
+though the separator specification is, of course, meaningless in that case
+as it will never be needed to separate a maximum of one item.
+
+If a C<%> appears anywhere else in a grammar (i.e. I<not> immediately after a
+repetition qualifier), it is treated normally (i.e. as a self-matching literal
+character):
+
+    <token: perl_hash>
+        % <ident>                # match "%foo", "%bar", etc.
+
+    <token: perl_mod>
+        <expr> % <expr>          # match "$n % 2", "($n+3) % ($n-1)", etc.
+
+If you need to match a literal C<%> immediately after a repetition, either
+quote it:
+
+    <token: percentage>
+        \d{1,3} \% solution                  # match "7% solution", etc.
+
+or refactor the C<%> character:
+
+    <token: percentage>
+        \d{1,3} <percent_sign> solution      # match "7% solution", etc.
+
+    <token: percent_sign>
+        %
+
+Note that it's usually necessary to use the C<< <[...]> >> form for the
+repeated items being matched, so that all of them are saved in the
+result hash. You can also save all the separators (if they're important)
+by specifying them as a list-like subrule too:
+
+    \(  <[number]>* % <[comma]>  \)  # save numbers *and* separators
+
+The repeated item I<must> be specified as a subrule call of some kind
+(i.e. in angles), but the separators may be specified either as a
+subrule or as a raw bracketed pattern. For example:
+
+    <[number]>* % ( , | : )    # Numbers separated by commas or colons
+
+    <[number]>* % [,:]         # Same, but more efficiently matched
+
+The separator should always be specified within matched delimiters of
+some kind: either matching C<< <...> >> or matching C<(...)> or matching
 C<[...]>. Simple, non-bracketed separators will sometimes also work:
 
-    <[number]> ** ,
+    <[number]>+ % ,
 
 but not always:
 
-    <[number]> ** ,\s+     # Oops! Separator is just: ,
+    <[number]>+ % ,\s+     # Oops! Separator is just: ,
 
 This is because of the limited way in which the module internally parses
 ordinary regex components (i.e. without full understanding of their
 implicit precedence). As a consequence, consistently placing brackets
 around any separator is a much safer approach:
 
-    <[number]> ** (,\s+)
+    <[number]>+ % (,\s+)
 
 
-You can also use a simple pattern on the left of the C<**> as the item
+You can also use a simple pattern on the left of the C<%> as the item
 matcher, but in this case it I<must always> be aliased into a
 list-collecting subrule, like so:
 
-    <[item=(\d+)]> ** [,]
+    <[item=(\d+)]>* % [,]
+
+
+Note that, for backwards compatibility with earlier versions of
+Regexp::Grammars, the C<+%> operator can also be written: C<**>.
+However, there can be no space between the two asterisks of this
+variant. That is:
+
+    <[item]> ** <sep>      # same as <[item]>* % <sep>
+
+    <[item]>* * <sep>      # error (two * qualifiers in a row)
 
 
 =head2 Matching hash keys
@@ -3886,11 +4019,11 @@ expressions:
         qr{
             <Expr>
 
-            <rule: Expr>       <[Operand=Mult]> ** <[Op=(\+|\-)]>
+            <rule: Expr>       <[Operand=Mult]>+ % <[Op=(\+|\-)]>
 
-            <rule: Mult>       <[Operand=Pow]>  ** <[Op=(\*|/|%)]>
+            <rule: Mult>       <[Operand=Pow]>+  % <[Op=(\*|/|%)]>
 
-            <rule: Pow>        <[Operand=Term]> ** <Op=(\^)>
+            <rule: Pow>        <[Operand=Term]>+ % <Op=(\^)>
 
             <rule: Term>          <MATCH=Literal>
                        |       \( <MATCH=Expr> \)
@@ -3994,7 +4127,7 @@ in the grammar, and instead of any start-rule. For example:
         <grammar: List::Generic>
 
         <rule: List>
-            <MATCH=[Item]> ** <Separator>
+            <MATCH=[Item]>+ % <Separator>
 
         <rule: Item>
             \S++
@@ -4215,7 +4348,7 @@ list, such as:
 
     <rule: List>
 
-        <[Item]>  **  <[Sep=(,)]>
+        <[Item]>+ % <[Sep=(,)]>
 
 If this construct matches just a single item, the result hash will
 contain a single entry consisting of a nested array with a single
@@ -4229,7 +4362,7 @@ directive:
 
     <rule: List>
 
-        <[Item]>  **  <[Sep=(,)]>
+        <[Item]>+ % <[Sep=(,)]>
 
         <minimize:>
 
@@ -4382,11 +4515,11 @@ grammar. Such a calculator might look like this:
             <Answer>
 
             <rule: Answer>
-                ( <.Mult> ** <.Op=([+-])> )
+                ( <.Mult>+ % <.Op=([+-])> )
                     <MATCH= (?{ eval $CAPTURE })>
 
             <rule: Mult>
-                ( <.Pow> ** <.Op=([*/%])> )
+                ( <.Pow>+ % <.Op=([*/%])> )
                     <MATCH= (?{ eval $CAPTURE })>
 
             <rule: Pow>
@@ -4994,7 +5127,17 @@ C<(?!)> when matching). For example:
       | <ClientName>
       | <error: (?{ $errcount++ . ': Missing list element' })>
 
-The error message is conditional in the sense that, if any surrounding rule
+So a common code pattern when using grammars that do this kind of error
+detection is:
+
+    if ($text =~ $grammar) {
+        # Do something with the data collected in %/
+    }
+    else {
+        say {*STDERR} $_ for @!;   # i.e. report all errors
+    }
+
+Each error message is conditional in the sense that, if any surrounding rule
 subsequently matches, the message is automatically removed from C<@!>. This
 implies that you can queue up as many error messages as you wish, but they
 will only remain in C<@!> if the match ultimately fails. Moreover, only those
@@ -5046,7 +5189,7 @@ it is supplied automatically, derived from the name of the current rule.
 For example, if the following rule were to fail to match:
 
     <rule: Arithmetic_expression>
-          <Multiplicative_Expression> ** ([+-])
+          <Multiplicative_Expression>+ % ([+-])
         | <error:>
 
 the error message queued would be:
@@ -5057,7 +5200,7 @@ Note however, that it is still essential to include the colon in the
 directive. A common mistake is to write:
 
     <rule: Arithmetic_expression>
-          <Multiplicative_Expression> ** ([+-])
+          <Multiplicative_Expression>+ % ([+-])
         | <error>
 
 which merely attempts to call C<< <rule: error> >> if the first
@@ -5113,7 +5256,7 @@ For example, in the following grammar:
     <grammar: List::Generic>
 
     <rule: List>
-        <[Item]> ** (\s*,\s*)
+        <[Item]>+ % (\s*,\s*)
 
     <rule: Item>
         <...>
@@ -5490,9 +5633,9 @@ that point and starts backtracking.
 
 =item C<< <error: > >>
 
-This directive queues a I<conditional> error message within C<@!> and
-then fails to match at that point (that is, it is equivalent to a
-C<(?!)> or C<(*FAIL)> when matching).
+This directive queues a I<conditional> error message within the global
+special variable C<@!> and then fails to match at that point (that is,
+it is equivalent to a C<(?!)> or C<(*FAIL)> when matching).
 
 =item C<< <fatal: (?{ CODE })  > >>
 
@@ -5663,9 +5806,13 @@ If it matches successfully, append the hash it returns to a nested array
 within the current scope's result-hash, under the key C<'IDENTIFIER_2'>.
 
 
-=item C<< <ANY_SUBRULE> ** <ANY_OTHER_SUBRULE> >>
+=item C<< <ANY_SUBRULE>+ % <ANY_OTHER_SUBRULE> >>
 
-=item C<< <ANY_SUBRULE> ** (PATTERN) >>
+=item C<< <ANY_SUBRULE>* % <ANY_OTHER_SUBRULE> >>
+
+=item C<< <ANY_SUBRULE>+ % (PATTERN) >>
+
+=item C<< <ANY_SUBRULE>* % (PATTERN) >>
 
 Repeatedly call the first subrule.
 Keep matching as long as the subrule matches, provided successive
@@ -5792,9 +5939,10 @@ See also: the C<< <log: LOGFILE> >> and C<< <debug: DEBUG_CMD> >> directives.
 
 =item *
 
-The Perl 5 regex engine is not reentrant. So any attempt to perform
-a regex match inside a C<(?{ ... })> or C<(??{ ... })> will almost
-certainly lead to either weird data corruption or a segfault.
+Prior to Perl 5.14, the Perl 5 regex engine as not reentrant. So any
+attempt to perform a regex match inside a C<(?{ ... })> or C<(??{
+... })> under Perl 5.12 or earlier will almost certainly lead to either
+weird data corruption or a segfault.
 
 The same calamities can also occur in any constructor called by
 C<< <objrule:> >>. If the constructor invokes another regex in any
@@ -5843,7 +5991,7 @@ parse with), then you probably need to use the "separated list"
 construct instead:
 
     <rule: List>
-        <[ListElem]> ** (,)
+        <[ListElem]>+ % (,)
 
 =item *
 
@@ -5870,14 +6018,6 @@ For the time being, you need to make sure that grammar rules don't appear
 inside a positive lookahead or use the
 L<<< C<< <?RULENAME> >> construct | "Lookahead (zero-width) subrules" >>>
 instead
-
-=item *
-
-Fully qualified subrule calls are I<not> (yet) polymorphically
-dispatched. At present you must specify the name of the exact ancestor
-grammar whose rule you want to use. This limitation will be removed in a
-future release.
-
 
 =back
 

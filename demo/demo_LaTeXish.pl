@@ -4,6 +4,7 @@ use warnings;
 my $parser = do{
     use Regexp::Grammars;
     qr{
+        <debug:on>
         <file>
 
         <objrule: Latex::file>
@@ -47,8 +48,8 @@ my $parser = do{
             \\  <name>  <options>?  <[arg=group]>*
 
         <objrule: Latex::options>
-            \[  <[option]> ** <_Sep=(,)>  \]
-        
+            \[  <[option]>+ % <_Sep=(,)>  \]
+
         <objrule: Latex::group>
             \{  <[element]>*  \}
 
@@ -78,32 +79,32 @@ if ($input =~ $parser) {
 
 sub Latex::file::explain
 {
-	my ($self, $level) = @_;
-	for my $element (@{$self->{element}})
-	{
-		$element->explain($level);
-		print "\n";
-	}
+    my ($self, $level) = @_;
+    for my $element (@{$self->{element}})
+    {
+        $element->explain($level);
+        print "\n";
+    }
 }
 
 sub Latex::element::explain
 {
-	my ($self, $level) = @_;
-	(  $self->{command}
+    my ($self, $level) = @_;
+    (  $self->{command}
     || $self->{literal}
     || $self->{special} )->explain($level)
 }
 
 sub Latex::command::explain
 {
-	my ($self, $level) = @_;
-	say "\t"x$level, "Command:";
-	say "\t"x($level+1), "Name: $self->{name}";
+    my ($self, $level) = @_;
+    say "\t"x$level, "Command:";
+    say "\t"x($level+1), "Name: $self->{name}";
     if ($self->{options}) {
         say "\t"x$level, "\tOptions:";
         $self->{options}->explain($level+2)
     }
-       
+
     for my $arg (@{$self->{arg}}) {
         say "\t"x$level, "\tArg:";
         $arg->explain($level+2)
@@ -112,39 +113,39 @@ sub Latex::command::explain
 
 sub Latex::options::explain
 {
-	my ($self, $level) = @_;
-	$_->explain($level) foreach @{$self->{option}};
+    my ($self, $level) = @_;
+    $_->explain($level) foreach @{$self->{option}};
 }
 
 sub Latex::group::explain
 {
-	my ($self, $level) = @_;
-	$_->explain($level) foreach @{$self->{element}};
+    my ($self, $level) = @_;
+    $_->explain($level) foreach @{$self->{element}};
 }
 
 
 sub Latex::option::explain
 {
-	my ($self, $level) = @_;
-	say "\t"x$level, "Option: $self->{q{}}";
+    my ($self, $level) = @_;
+    say "\t"x$level, "Option: $self->{q{}}";
 }
 
 sub Latex::literal::explain
 {
-	my ($self, $level, $label) = @_;
+    my ($self, $level, $label) = @_;
     $label //= 'Literal';
-	say "\t"x$level, "$label: ", $self->{q{}};
+    say "\t"x$level, "$label: ", $self->{q{}};
 }
 
 sub Latex::mathematical::explain {
     my ($self, $level) = @_;
 
     say "\t"x$level, "Mathematical:";
-	for my $element (@{$self->{element}})
-	{
-		$element->explain($level+1);
-		print "\n";
-	}
+    for my $element (@{$self->{element}})
+    {
+        $element->explain($level+1);
+        print "\n";
+    }
 }
 
 sub Latex::comment::explain {

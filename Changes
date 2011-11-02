@@ -170,3 +170,26 @@ Revision history for Regexp-Grammars
 
     * Added new tests for objrules whose classes are based
       on Moose or autoloading (thanks Nathan!)
+
+
+1.014  Wed Nov  2 13:57:09 2011
+
+    * Improved description of <error:...> directive to make it clearer 
+      that errors manifest in @! variable (thanks Leigh)
+
+    * Added t/error_non_backtracking.t and
+      demo/demo_error_nonbacktracking.pl to demonstrate use of (*COMMIT)
+      to optimize error messages (thanks Nicolas)
+
+    * Removed undocumented dependency of test suite on Class::Accessor
+      (thanks Duff)
+
+    * Tweaked caveats section to reflect improvements both in module
+      (grammar inheritance now fully polymorphic) and in Perl 5.14
+      regexes (regexes now reentrant)
+
+    * Fixed problem with \N{NAMED CHARS} under 5.12 and later (thanks Tom!)
+
+    * Added *% +% and {n,m}% separated repetitions to track the
+      Perl 6 feature
+

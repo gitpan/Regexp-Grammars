@@ -18,7 +18,7 @@ my $metagrammar = q{
             <Body=RuleBody>
 
     <token: RuleBody>
-        <[Std=StdRegex]> ** <[NonStd=Translatable]>
+        <[Std=StdRegex]>+ % <[NonStd=Translatable]>
 
     <token: StdRegex>
         <MATCH= ([^<]*+ .*?)>

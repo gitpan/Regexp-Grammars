@@ -8,7 +8,7 @@ my $calculator = do{
     use Regexp::Grammars;
     qr{ 
         \A 
-        <Answer>
+        <Answer> (*COMMIT)
         (?:
             \Z
         |
@@ -81,14 +81,12 @@ __DATA__
              "Extra junk after expression at index 1: 'zoo'",
              "Expected end of input, but found 'zoo' instead",
              "Expected valid input, but found 'zoo' instead",
-             "Can't match subrule <Trailing_stuff> (not implemented)",
             ]
 
 1+2zoo        [
-             "Extra junk after expression at index 1: '+2zoo'",
-             "Expected end of input, but found '+2zoo' instead",
-             "Expected valid input, but found '+2zoo' instead",
-             "Can't match subrule <Trailing_stuff> (not implemented)",
+             "Extra junk after expression at index 3: 'zoo'",
+             "Expected end of input, but found 'zoo' instead",
+             "Expected valid input, but found 'zoo' instead",
             ]
 
 zoo         [

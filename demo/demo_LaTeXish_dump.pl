@@ -47,7 +47,7 @@ my $parser = do{
             \\  <name>  <options>?  <[arg=group]>*
 
         <rule: options>
-            \[  <[option]> ** <_Sep=(,)>  \]
+            \[  <[option]>+ % <_Sep=(,)>  \]
         
         <rule: group>
             \{  <[element]>*  \}

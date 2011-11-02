@@ -11,7 +11,7 @@ my $grammar = qr{
         <require: (?{ $MATCH < 256 })>
 
     <token: IP4_addr>
-        <[MATCH=quad]> ** (\.)
+        <[MATCH=quad]>+ % (\.)
         <require: (?{ @$MATCH == 4 })>
 }xms;
 

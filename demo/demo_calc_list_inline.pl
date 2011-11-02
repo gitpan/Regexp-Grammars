@@ -10,7 +10,7 @@ my $calculator = do{
         <Answer>
 
         <rule: Answer>
-            <[_Operand=Mult]> ** <[_Op=(\+|\-)]>
+            <[_Operand=Mult]>+ % <[_Op=(\+|\-)]>
                 (?{ $MATCH = shift @{$MATCH{_Operand}};
                     for my $term (@{$MATCH{_Operand}}) {
                         my $op = shift @{$MATCH{_Op}//=[]};
@@ -20,13 +20,13 @@ my $calculator = do{
                 })
 
         <rule: Mult>
-            <[_Operand=Pow]> ** <[_Op=(\*|/|%)]>
+            <[_Operand=Pow]>+ % <[_Op=(\*|/|%)]>
                 (?{ $MATCH = reduce { eval($a . shift(@{$MATCH{_Op}}) . $b) }
                                     @{$MATCH{_Operand}};
                 })
 
         <rule: Pow>
-            <[_Operand=Term]> ** <_Op=(\^)> 
+            <[_Operand=Term]>+ % <_Op=(\^)> 
                 (?{ $MATCH = reduce { $b ** $a } reverse @{$MATCH{_Operand}}; })
 
         <rule: Term>

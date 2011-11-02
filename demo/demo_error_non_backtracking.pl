@@ -8,6 +8,7 @@ my $calculator = do{
     qr{ 
         \A 
         <Answer>
+        (*COMMIT)   # <-- Remove this to see the error messages get less accurate
         (?:
             \Z
         |

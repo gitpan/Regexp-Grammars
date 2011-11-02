@@ -4,18 +4,18 @@ use warnings;
 
 my %ACTION = (
 
-     start       => sub{ say "starting @_"; },   
-     stop        => sub{ say "stopping @_"; }, 
-     restart     => sub{ say "restarting @_"; }, 
-     connect     => sub{ say "connecting @_"; }, 
-     disconnect  => sub{ say "disconnecting @_"; }, 
-     reconnect   => sub{ say "reconnecting @_"; }, 
-     login       => sub{ say "login to @_"; }, 
-     logout      => sub{ say "logout from @_"; }, 
-     logoutall   => sub{ say "logoutall on @_"; }, 
-     ping        => sub{ say "pinging @_"; }, 
-     stat        => sub{ say "stat'ing @_"; }, 
-     status      => sub{ say "status of @_"; }, 
+     start       => sub{ say "starting @_"; },
+     stop        => sub{ say "stopping @_"; },
+     restart     => sub{ say "restarting @_"; },
+     connect     => sub{ say "connecting @_"; },
+     disconnect  => sub{ say "disconnecting @_"; },
+     reconnect   => sub{ say "reconnecting @_"; },
+     login       => sub{ say "login to @_"; },
+     logout      => sub{ say "logout from @_"; },
+     logoutall   => sub{ say "logoutall on @_"; },
+     ping        => sub{ say "pinging @_"; },
+     stat        => sub{ say "stat'ing @_"; },
+     status      => sub{ say "status of @_"; },
 
 );
 
@@ -43,7 +43,7 @@ my $machine_command = do{
 
         <rule: Command>
              <Action> <Machine_name>
-        
+
         <rule: Action>
             $ACTIONS
 

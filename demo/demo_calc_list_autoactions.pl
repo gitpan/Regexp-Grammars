@@ -8,17 +8,17 @@ my $calculator = do{
         <Answer>
 
         <rule: Answer>
-            <[Operand=Mult]> ** <[Op=(\+|\-)]>
+            <[Operand=Mult]>+ % <[Op=(\+|\-)]>
 
         <rule: Mult>
-            <[Operand=Pow]> ** <[Op=(\*|/|%)]>
+            <[Operand=Pow]>+ % <[Op=(\*|/|%)]>
 
         <rule: Pow>
-            <[Operand=Term]> ** <Op=(\^)> 
+            <[Operand=Term]>+ % <Op=(\^)>
 
         <rule: Term>
                 <MATCH=Literal>
-          | 
+          |
             \(  <MATCH=Answer>  \)
 
         <token: Literal>
@@ -58,7 +58,7 @@ sub Pow {
 
 
 # and later...
-    
+
 while (my $input = <>) {
     if ($input =~ $calculator->with_actions('Calculator_Actions') ) {
         say '--> ', $/{Answer};

@@ -10,13 +10,13 @@ my $calculator = qr{
     <Answer>
 
     <objrule: Answer>
-        <[Operand=Mult]> ** <[Operator=(\+|\-)]>
+        <[Operand=Mult]>+ % <[Operator=(\+|\-)]>
 
     <objrule: Mult>
-        <[Operand=Pow]> ** <[Operator=( [*/%] )]>
+        <[Operand=Pow]>+ % <[Operator=( [*/%] )]>
 
     <objrule: Pow>
-        <[Operand=Term]> ** <Operator=(\^)> 
+        <[Operand=Term]>+ % <Operator=(\^)>
 
     <objrule: Term>
         <MATCH=Literal>

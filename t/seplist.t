@@ -38,7 +38,7 @@ while (my $input = <DATA>) {
         is_deeply $/{List}{Value}, eval($data_structure)
                                        => 'Build correct structure';
     }
-    
+
     ok +($input_copy =~ $list_empty) => 'Matched possibly-empty list:' . $list;
     is_deeply $/{List}{Value}, eval($data_structure)
                                 => 'Build correct structure';

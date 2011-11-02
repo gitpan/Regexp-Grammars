@@ -5,11 +5,12 @@ use Test::More 'tests' => 2;
 # Use this class declaration to check that classes with ctors
 # actually call the ctor when objrules use them...
 { package Speaker;
-
-    use base qw(Class::Accessor);
-
-    Speaker->mk_accessors(qw(name alias id));
-
+    sub new {
+        my ($class, $data_ref) = @_;
+        my $newobj = bless $data_ref, $class;
+        $newobj->{ctor} = 'was called';
+        return $newobj;
+    }
 }
 
 my $parser = do{
@@ -40,6 +41,7 @@ my $target = {
         "alias" => "kolibrie",
         "id" => 1613,
         "name" => "Nathan Gray",
+        "ctor" => "was called",
       }, "Speaker"),
 };
 
