@@ -193,3 +193,13 @@ Revision history for Regexp-Grammars
     * Added *% +% and {n,m}% separated repetitions to track the
       Perl 6 feature
 
+
+
+1.015  Wed Feb 29 12:37:25 2012
+
+    * Enabled limited support for tracking raw regex components when
+      debugging a grammar (mainly literals and backslashed
+      metacharacters)
+
+    * Fixed bug that prevented named subpattern captures from including 
+      lookbehinds (e.g. <name=( (?<!foo) bar )> didn't work)

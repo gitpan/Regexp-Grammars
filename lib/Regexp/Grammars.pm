@@ -4,10 +4,10 @@ use warnings;
 use strict;
 use 5.010;
 
-use Scalar::Util qw< blessed >;
+use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.014';
+our $VERSION = '1.015';
 
 
 # Load the module...
@@ -337,6 +337,24 @@ sub _debug_fatal {
     $@ = "Entire parse terminated prematurely while attempting to call non-existent rule: $naughty_construct";
 }
 
+# Handle objrules that don't return hashes...
+sub _debug_non_hash {
+    my ($obj, $name) = @_;
+
+    # If the object is okay, no further action required...
+    return q{} if reftype($obj) eq 'HASH';
+
+    # Generate error messages...
+    print {*Regexp::Grammars::LOGFILE}
+    "_________________________________________________________________\n",
+    "Fatal error: <objrule: $name> returned a non-hash-based object\n",
+    "_________________________________________________________________\n";
+    $@ = "<objrule: $name> returned a non-hash-based object";
+
+    return '(*COMMIT)(*FAIL)';
+}
+
+
 # Print a <log:...> message in context...
 sub _debug_logmsg {
     my ($stack_height, @msg) = @_;
@@ -528,12 +546,12 @@ sub _build_raw_debugging_statements {
         return (
         qq{
             (?{;Regexp::Grammars::_debug_trying(\@Regexp::Grammars::RESULT_STACK+$extra_pre_indent,
-              \$Regexp::Grammars::RESULT_STACK[-2+$extra_pre_indent], q{subpattern /$subpattern/})
+              \$Regexp::Grammars::RESULT_STACK[-2+$extra_pre_indent], q{subpattern /$subpattern/}, \$^N)
                 if \$Regexp::Grammars::DEBUG_LEVEL{\$Regexp::Grammars::DEBUG};})
             },
         qq{
             (?{;Regexp::Grammars::_debug_matched(\@Regexp::Grammars::RESULT_STACK+1,
-              \$Regexp::Grammars::RESULT_STACK[-1], q{subpattern /$subpattern/})
+              \$Regexp::Grammars::RESULT_STACK[-1], q{subpattern /$subpattern/}, \$^N)
                 if \$Regexp::Grammars::DEBUG_LEVEL{\$Regexp::Grammars::DEBUG};})
             },
         );
@@ -756,7 +774,7 @@ my $PROLOGUE = q{((?{; @! = () if !pos;
 
 # This code inserted at the end of every grammar regex
 #    (puts final result in %/. Also defines default <ws>, <hk>, etc.)...
-my $EPILOGUE = q{)(?{; $Regexp::Grammars::RESULT_STACK[-1]{q{}} //= $^N;
+my $EPILOGUE = q{)(?{; $Regexp::Grammars::RESULT_STACK[-1]{q{}} //= $^N;;
          local $Regexp::Grammars::match_frame = pop @Regexp::Grammars::RESULT_STACK;
          delete @{$Regexp::Grammars::match_frame}{
                     '~', grep {substr($_,0,1) eq '_'} keys %{$Regexp::Grammars::match_frame}
@@ -781,7 +799,7 @@ my $EPILOGUE = q{)(?{; $Regexp::Grammars::RESULT_STACK[-1]{q{}} //= $^N;
     )
 };
 my $EPILOGUE_NC = $EPILOGUE;
-   $EPILOGUE_NC =~ s{ ; [^;]+ ;}{;}xms;
+   $EPILOGUE_NC =~ s{ ; .* ;;}{;}xms;
 
 
 #=====[ MISCELLANEOUS PATTERNS THAT MATCH USEFUL THINGS ]========
@@ -916,7 +934,7 @@ sub _translate_raw_regex {
     #       but need to find a way to insert the extra ) at the other end
 
     return $debug_runtime && $regex eq '|'   ?  $regex . $debug_post
-         : $debug_runtime && $regex =~ /\S/  ?  '(?:' .$debug_pre . $regex . $debug_post . ')'
+         : $debug_runtime && $regex =~ /\S/  ?  "(?:$debug_pre($regex)$debug_post)"
          :                                      $regex;
 }
 
@@ -1376,10 +1394,11 @@ sub _translate_rule_def {
 
     # Return object if requested...
     my $objectification =
-        $objectify ? qq{(?{; local \@Regexp::Grammars::RESULT_STACK = \@Regexp::Grammars::RESULT_STACK;
+        $objectify ? qq{(??{; local \@Regexp::Grammars::RESULT_STACK = \@Regexp::Grammars::RESULT_STACK;
                             \$Regexp::Grammars::RESULT_STACK[-1] = '$qualifier$name'->can('new')
                                 ? '$qualifier$name'->new(\$Regexp::Grammars::RESULT_STACK[-1])
                                 : bless \$Regexp::Grammars::RESULT_STACK[-1], '$qualifier$name';
+                            Regexp::Grammars::_debug_non_hash(\$Regexp::Grammars::RESULT_STACK[-1],'$name');
                         })}
                    : q{};
 
@@ -1526,14 +1545,22 @@ sub _translate_subrule_calls {
         )
         > (?<modifier> \s* (?! (?&SEPLIST_OP) ) [?+*][?+]? | )
       |
+        (?<reportable_raw_regex>
+            (?: \\[^shv]
+            |   (?! (?&PARENCODE) ) (?&PARENS)
+            |   (?&CHARSET)
+            |   \w++
+            |   \|
+            )
+            (?&QUANTIFIER)?
+        )
+      |
         (?<raw_regex>
               \s++
-            | \\.
+            | \\. (?&QUANTIFIER)?
             | \(\?!
             | \(\?\# [^)]* \)   # (?# -> old style inline comment)
             | (?&PARENCODE)
-            | (?&PARENS)
-            | (?&CHARSET)
             | \# [^\n]*+
             | [^][\s()<>#\\]++
         )
@@ -1541,11 +1568,11 @@ sub _translate_subrule_calls {
 
     (?(DEFINE)
         (?<SEPLIST_OP> \*\* | [*+?][+?]?\s*% | {\d+(,\d*)?}[+?]?\s*%                                                )
-        (?<PARENS>    \(     (?: \\. | (?&PARENCODE) | (?&PARENS) | (?&CHARSET) | [^][()\\<>]++ )*+ \)   )
+        (?<PARENS>    \( (?:[?]<[=!])? (?: \\. | (?&PARENCODE) | (?&PARENS) | (?&CHARSET) | [^][()\\<>]++ )*+ \)   )
         (?<BRACES>    \{     (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}   )
         (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}\) )
         (?<HASH>      \% (?&IDENT) (?: :: (?&IDENT) )*                                                   )
-        (?<CHARSET>   \[              \^?+ \\?+ \]?+ [^]]*+                                         \]   )
+        (?<CHARSET>   \[              \^?+ \\?+ \]?+ (?: \[:\w+:\] | [^]])*+                        \]   )
         (?<IDENT>     [^\W\d]\w*+                                                                        )
         (?<QUALIDENT> (?: [^\W\d]\w*+ :: )*  [^\W\d]\w*+                                                 )
         (?<LITERAL>   (?&NUMBER) | (?&STRING) | (?&VAR)                                                  )
@@ -1556,6 +1583,7 @@ sub _translate_subrule_calls {
         (?<ARG>       (?&VAR)  |  (?&KEY) \s* => \s* (?&LITERAL)                                         )
         (?<VAR>       : (?&IDENT)                                                                        )
         (?<KEY>       (?&IDENT) | (?&LITERAL)                                                            )
+        (?<QUANTIFIER> [*+?][+?]? | {\d+,?\d*}[+?]?i                                                     )
     )
     }{
         my $curr_construct = $+{construct};
@@ -1749,10 +1777,17 @@ sub _translate_subrule_calls {
                 );
             }
 
-        # Translate raw regexes (leave as is)...
+        # Translate reportable raw regexes (add debugging support)...
+            elsif ($+{reportable_raw_regex}) {
+                _translate_raw_regex(
+                    $+{reportable_raw_regex}, $compiletime_debugging_requested, $runtime_debugging_requested
+                );
+            }
+
+        # Translate non-reportable raw regexes (leave as is)...
             elsif ($+{raw_regex}) {
                 _translate_raw_regex(
-                    $+{raw_regex}, $compiletime_debugging_requested,
+                    $+{raw_regex}, $compiletime_debugging_requested
                 );
             }
 
@@ -1799,10 +1834,22 @@ sub _translate_subrule_calls {
             }
             elsif ($+{context_directive}) {
                 $nocontext = 0;
+                if ($compiletime_debugging_requested) {
+                    _debug_notify( info => "   |",
+                                           "   |...Treating $curr_construct as:",
+                                           "   |       \\ Turn on context-saving for the current rule"
+                    );
+                }
                 q{};  # Remove the directive
             }
             elsif ($+{nocontext_directive}) {
                 $nocontext = 1;
+                if ($compiletime_debugging_requested) {
+                    _debug_notify( info => "   |",
+                                           "   |...Treating $curr_construct as:",
+                                           "   |       \\ Turn off context-saving for the current rule"
+                    );
+                }
                 q{};  # Remove the directive
             }
 
@@ -2235,6 +2282,9 @@ sub _build_grammar {
             $nocontext,
         );
 
+        # Wrap the main regex (to ensure |'s don't segment pre and # post commands)...
+        $regex = "(?:$regex)";
+
         # Report how construct was interpreted, if requested to...
         if ($compiletime_debugging_requested) {
             _debug_notify( q{} =>
@@ -2383,7 +2433,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.014
+This document describes Regexp::Grammars version 1.015
 
 
 =head1 SYNOPSIS
@@ -4655,6 +4705,10 @@ result hash:
 
     bless \%result_hash, $class
 
+Note that, even if object is constructed via its own constructor, the
+module still expects the new object to be hash-based, and will fail if
+the object is anything but a blessed hash. The module issues an
+error in this case.
 
 The generic syntax for these types of rules and tokens is:
 
@@ -6071,6 +6125,15 @@ See the preceding diagnostic for remedies.
 
 This diagnostic should throw an exception, but can't. So it sets C<$@>
 instead, allowing you to trap the error manually if you wish.
+
+
+=item C<< Fatal error: <objrule: %s> returned a non-hash-based object >>
+
+An <objrule:> was specified and returned a blessed object that wasn't
+a hash. This will break the behaviour of the grammar, so the module
+immediately reports the problem and gives up.
+
+The solution is to use only hash-based classes with <objrule:>
 
 
 =item C<< Can't match against <grammar: %s> >>
