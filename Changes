@@ -203,3 +203,9 @@ Revision history for Regexp-Grammars
 
     * Fixed bug that prevented named subpattern captures from including 
       lookbehinds (e.g. <name=( (?<!foo) bar )> didn't work)
+
+
+1.016  Sat Mar 10 07:01:30 2012
+
+    * Fixed omissions in charset recognition within metagrammar
+      (now handles \] and otehr escapes correctly)

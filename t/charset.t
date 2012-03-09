@@ -38,7 +38,7 @@ while (my $input = <DATA>) {
         is( $/{Bracketed}{text}, $text );
     }
     else {
-        fail( 'did not match bracketed text' );
+        fail( 'did not match bracketed text with [^\]]+' );
     }
 
     if ( $to_match =~ $escaped_bs ) {
@@ -46,7 +46,7 @@ while (my $input = <DATA>) {
         is( $/{Bracketed}{text}, $text );
     }
     else {
-        fail( 'did not match bracketed text' );
+        fail( 'did not match bracketed text with [^\\]+' );
     }
 
     if ( $to_match =~ /$old_bracket/ ) {
@@ -54,7 +54,7 @@ while (my $input = <DATA>) {
         is( $/{Bracketed}{text}, $text );
     }
     else {
-        fail( 'did not match bracketed text' );
+        fail( 'did not match bracketed text with [^]]+' );
     }
 }
 

@@ -7,7 +7,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.015';
+our $VERSION = '1.016';
 
 
 # Load the module...
@@ -813,7 +813,7 @@ my $PARENS = qr{
     (?&PARENS)
     (?(DEFINE)
         (?<PARENS> \( (?: \\. | (?&PARENS) | (?&CHARSET) | [^][()\\]++)*+ \) )
-        (?<CHARSET> \[ \^?+ \\?+ \]?+ [^]]*+ \] )
+        (?<CHARSET> \[ \^?+ \]?+ (?: \[:\w+:\] | \\. | [^]])*+ \] )
 
     )
 }xms;
@@ -1572,7 +1572,7 @@ sub _translate_subrule_calls {
         (?<BRACES>    \{     (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}   )
         (?<PARENCODE> \(\?\{ (?: \\. | (?&BRACES)    | [^{}\\]++   )*+                              \}\) )
         (?<HASH>      \% (?&IDENT) (?: :: (?&IDENT) )*                                                   )
-        (?<CHARSET>   \[              \^?+ \\?+ \]?+ (?: \[:\w+:\] | [^]])*+                        \]   )
+        (?<CHARSET>   \[ \^?+ \]?+ (?: \[:\w+:\] | \\. | [^]] )*+                                   \]   )
         (?<IDENT>     [^\W\d]\w*+                                                                        )
         (?<QUALIDENT> (?: [^\W\d]\w*+ :: )*  [^\W\d]\w*+                                                 )
         (?<LITERAL>   (?&NUMBER) | (?&STRING) | (?&VAR)                                                  )
@@ -2433,7 +2433,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.015
+This document describes Regexp::Grammars version 1.016
 
 
 =head1 SYNOPSIS
