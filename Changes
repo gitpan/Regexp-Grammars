@@ -209,3 +209,25 @@ Revision history for Regexp-Grammars
 
     * Fixed omissions in charset recognition within metagrammar
       (now handles \] and otehr escapes correctly)
+
+
+1.020  Thu Aug 16 14:13:03 2012
+
+    * Fixed licence generation in Makefile.PL
+
+    * Fixed issues with the stupid behaviour
+      of Perl 5.17+ wrt (un)backslashed {'s
+
+    * Fixed bad code in SYNOPSIS example
+      (Thanks Paul!)
+
+    * Fixed bad code in demo/demo_pos.pl
+      (Thanks Peng)
+
+    * Corrected docs for <debug: on>
+      (Thanks Peng)
+
+    * BACKWARDS INCOMPATIBLE CHANGE!!!!
+      Due to limitations in Perl's qr overload
+      The <\IDENT> backreference syntax has had to be changed
+      to <\_IDENT>

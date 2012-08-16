@@ -10,8 +10,9 @@ my $grammar = qr{
     <delimited_text>
 
     <token: delimited_text>
-              qq? <delim> <text=(.*?)> </delim>
-    |   <pos> qq? <delim>  <error: (?{"Unterminated string starting at index $MATCH{pos}"})>
+        qq? <delim> <text=(.*?)> </delim>
+    |   <matchpos> qq? <delim>
+        <error: (?{"Unterminated string starting at index $MATCH{matchpos}"})>
 
     <token: delim>  [[:punct:]]++
 

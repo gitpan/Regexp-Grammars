@@ -5,12 +5,13 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     NAME                => 'Regexp::Grammars',
     AUTHOR              => 'Damian Conway <DCONWAY@CPAN.org>',
+    LICENSE             => 'perl',
     VERSION_FROM        => 'lib/Regexp/Grammars.pm',
     ABSTRACT_FROM       => 'lib/Regexp/Grammars.pm',
     PL_FILES            => {},
-    PREREQ_PM => {
-        'Test::More' => 0,
-        'version'    => 0,
+    PREREQ_PM           => {
+        'Test::More'    => 0,
+        'version'       => 0,
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Regexp-Grammars-*' },

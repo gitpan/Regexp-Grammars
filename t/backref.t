@@ -5,9 +5,9 @@ use Test::More 'no_plan';
 
 use Regexp::Grammars;
 
-my $delimited         = qr{ <delim=(['"`])> <content=(.*?)> <\delim> }xms;
-my $delimited_cap     = qr{ <delim=(['"`])> <content=(.*?)> <rdel=\delim> }xms;
-my $delimited_listcap = qr{ <delim=(['"`])> <content=(.*?)> <[rdel=\delim]> }xms;
+my $delimited         = qr{ <delim=(['"`])> <content=(.*?)> <\_delim> }xms;
+my $delimited_cap     = qr{ <delim=(['"`])> <content=(.*?)> <rdel=\_delim> }xms;
+my $delimited_listcap = qr{ <delim=(['"`])> <content=(.*?)> <[rdel=\_delim]> }xms;
 
 no Regexp::Grammars;
 

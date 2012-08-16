@@ -41,7 +41,7 @@ my $test_grammar = do {
             <[statement]> ** ( ; )
 
         <rule: statement> 
-            <ws: (\s*+ |  \#{ .*? }\# )* >   # Another type within statements
+            <ws: (\s*+ |  \#[{] .*? [}]\# )* >   # Another type within statements
             <cmd> <[arg]> ** ( , )
 
         <token: cmd>
