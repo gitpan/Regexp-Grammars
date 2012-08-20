@@ -1,3 +1,6 @@
+=encoding ISO8859-1
+=cut
+
 package Regexp::Grammars;
 
 use warnings;
@@ -7,7 +10,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.020';
+our $VERSION = '1.021';
 
 
 # Load the module...
@@ -2436,7 +2439,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.020
+This document describes Regexp::Grammars version 1.021
 
 
 =head1 SYNOPSIS

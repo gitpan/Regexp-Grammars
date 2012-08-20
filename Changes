@@ -231,3 +231,8 @@ Revision history for Regexp-Grammars
       Due to limitations in Perl's qr overload
       The <\IDENT> backreference syntax has had to be changed
       to <\_IDENT>
+
+
+1.021  Mon Aug 20 13:55:34 2012
+
+    * Made Latin-1 encoding of docs explicit
