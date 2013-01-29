@@ -236,3 +236,14 @@ Revision history for Regexp-Grammars
 1.021  Mon Aug 20 13:55:34 2012
 
     * Made Latin-1 encoding of docs explicit
+
+
+1.022  Tue Jan 22 18:39:16 2013
+
+    * Fixed minimization (by handling nocontext marker correctly)
+      (thanks Thomas!)
+
+
+1.025  Wed Jan 30 09:39:52 2013
+
+    * Reuploaded with no substantive modifications

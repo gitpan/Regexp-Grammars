@@ -10,7 +10,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.021';
+our $VERSION = '1.025';
 
 
 # Load the module...
@@ -1021,7 +1021,7 @@ sub _translate_minimize_directive {
     }
 
     return q{(?{;
-        if (1 == grep { $_ ne '!' && $_ ne '@' } keys %MATCH) { # ...single alnum key
+        if (1 == grep { $_ ne '!' && $_ ne '@' && $_ ne '~' } keys %MATCH) { # ...single alnum key
             local %Regexp::Grammars::matches = %MATCH;
             delete @Regexp::Grammars::matches{'!', '@'};
             local ($Regexp::Grammars::only_key) = keys %Regexp::Grammars::matches;
@@ -2439,7 +2439,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.021
+This document describes Regexp::Grammars version 1.025
 
 
 =head1 SYNOPSIS
