@@ -247,3 +247,10 @@ Revision history for Regexp-Grammars
 1.025  Wed Jan 30 09:39:52 2013
 
     * Reuploaded with no substantive modifications
+
+
+1.026  Thu Jan 31 08:20:14 2013
+
+    * Re-fixed minimization (by handling nocontext marker correctly)
+      (thanks again Thomas!)
+

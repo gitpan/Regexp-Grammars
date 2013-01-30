@@ -93,4 +93,5 @@ t/seplist_questionmark.t
 t/seplist_rawhash.t
 t/seplist_starhash.t
 t/error_non_hash_based.t
+t/minimize_bug.t
 META.yml                                 Module meta-data (added by MakeMaker)
