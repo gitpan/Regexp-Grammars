@@ -10,7 +10,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.026';
+our $VERSION = '1.027';
 
 
 # Load the module...
@@ -1599,7 +1599,7 @@ sub _translate_subrule_calls {
         my $curr_translation = do{
 
         # Translate subrule calls of the form: <ALIAS=(...)>...
-            if ($+{alias_parens_scalar}) {
+            if (defined $+{alias_parens_scalar}) {
                 my $pattern = substr($+{pattern},0,1) eq '(' ? $+{pattern} : "(?{$+{pattern}})";
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'scalar', $+{modifier},
@@ -1607,7 +1607,7 @@ sub _translate_subrule_calls {
                     $runtime_debugging_requested, $timeout_requested,
                 );
             }
-            elsif ($+{alias_parens_scalar_nocap}) {
+            elsif (defined $+{alias_parens_scalar_nocap}) {
                 my $pattern = substr($+{pattern},0,1) eq '(' ? $+{pattern} : "(?{$+{pattern}})";
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'noncapturing', $+{modifier},
@@ -1615,7 +1615,7 @@ sub _translate_subrule_calls {
                     $runtime_debugging_requested, $timeout_requested,
                 );
             }
-            elsif ($+{alias_parens_list}) {
+            elsif (defined $+{alias_parens_list}) {
                 my $pattern = substr($+{pattern},0,1) eq '(' ? $+{pattern} : "(?{$+{pattern}})";
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'list', $+{modifier},
@@ -1625,7 +1625,7 @@ sub _translate_subrule_calls {
             }
 
         # Translate subrule calls of the form: <ALIAS=%HASH>...
-            elsif ($+{alias_hash_scalar}) {
+            elsif (defined $+{alias_hash_scalar}) {
                 _translate_hashmatch(
                     $curr_construct, $alias, $+{varname}, $+{keypat}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1633,7 +1633,7 @@ sub _translate_subrule_calls {
                     $timeout_requested,
                 );
             }
-            elsif ($+{alias_hash_scalar_nocap}) {
+            elsif (defined $+{alias_hash_scalar_nocap}) {
                 _translate_hashmatch(
                     $curr_construct, $alias, $+{varname}, $+{keypat}, 'noncapturing', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1641,7 +1641,7 @@ sub _translate_subrule_calls {
                     $timeout_requested,
                 );
             }
-            elsif ($+{alias_hash_list}) {
+            elsif (defined $+{alias_hash_list}) {
                 _translate_hashmatch(
                     $curr_construct, $alias, $+{varname}, $+{keypat}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1651,7 +1651,7 @@ sub _translate_subrule_calls {
             }
 
         # Translate subrule calls of the form: <ALIAS=RULENAME>...
-            elsif ($+{alias_subrule_scalar}) {
+            elsif (defined $+{alias_subrule_scalar}) {
                 _translate_subrule_call(
                     $grammar_name,
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'scalar', $+{modifier},
@@ -1662,7 +1662,7 @@ sub _translate_subrule_calls {
                     $nocontext,
                 );
             }
-            elsif ($+{alias_subrule_list}) {
+            elsif (defined $+{alias_subrule_list}) {
                 _translate_subrule_call(
                     $grammar_name,
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'list', $+{modifier},
@@ -1675,11 +1675,11 @@ sub _translate_subrule_calls {
             }
 
         # Translate subrule calls of the form: <?RULENAME> and <!RULENAME>...
-            elsif ($+{self_subrule_lookahead}) {
+            elsif (defined $+{self_subrule_lookahead}) {
 
                 # Determine type of lookahead, and work around capture problem...
                 my ($type, $pre, $post) = ( 'neglookahead', '(?!(?!)|', ')' );
-                if ($+{sign} eq '?') {
+                if (defined $+{sign} eq '?') {
                     $type = 'poslookahead';
                     $pre  x= 2;
                     $post x= 2;
@@ -1696,7 +1696,7 @@ sub _translate_subrule_calls {
                   )
                 . $post;
             }
-            elsif ($+{self_subrule_scalar_nocap}) {
+            elsif (defined $+{self_subrule_scalar_nocap}) {
                 _translate_subrule_call(
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'noncapturing', $+{modifier},
@@ -1707,7 +1707,7 @@ sub _translate_subrule_calls {
                     $nocontext,
                 );
             }
-            elsif ($+{self_subrule_scalar}) {
+            elsif (defined $+{self_subrule_scalar}) {
                 _translate_subrule_call(
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'scalar', $+{modifier},
@@ -1718,7 +1718,7 @@ sub _translate_subrule_calls {
                     $nocontext,
                 );
             }
-            elsif ($+{self_subrule_list}) {
+            elsif (defined $+{self_subrule_list}) {
                 _translate_subrule_call(
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'list', $+{modifier},
@@ -1731,7 +1731,7 @@ sub _translate_subrule_calls {
             }
 
         # Translate subrule calls of the form: <ALIAS=:ARGNAME>...
-            elsif ($+{alias_argrule_scalar}) {
+            elsif (defined $+{alias_argrule_scalar}) {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'scalar', $+{modifier},
@@ -1739,7 +1739,7 @@ sub _translate_subrule_calls {
                     "in \$ARG{'$+{subrule}'}"
                 );
             }
-            elsif ($+{alias_argrule_list}) {
+            elsif (defined $+{alias_argrule_list}) {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
                     $curr_construct, $alias, $pattern, 'list', $+{modifier},
@@ -1749,7 +1749,7 @@ sub _translate_subrule_calls {
             }
 
         # Translate subrule calls of the form: <:ARGNAME>...
-            elsif ($+{self_argrule_scalar}) {
+            elsif (defined $+{self_argrule_scalar}) {
                 my $pattern = qq{(??{;\$Regexp::Grammars::RESULT_STACK[-1]{'\@'}{'$+{subrule}'} // '(?!)'})};
                 _translate_subpattern(
                     $curr_construct, qq{'$+{subrule}'}, $pattern, 'noncapturing', $+{modifier},
@@ -1759,7 +1759,7 @@ sub _translate_subrule_calls {
             }
 
         # Translate subrule calls of the form: <\IDENT> or </IDENT>...
-            elsif ($+{backref} || $+{alias_backref} || $+{alias_backref_list}) {
+            elsif (defined $+{backref} || $+{alias_backref} || $+{alias_backref_list}) {
                 # Use "%ARGS" if subrule names starts with a colon...
                 my $subrule = $+{subrule};
                 if (substr($subrule,0,1) eq ':') {
@@ -1784,53 +1784,53 @@ sub _translate_subrule_calls {
             }
 
         # Translate reportable raw regexes (add debugging support)...
-            elsif ($+{reportable_raw_regex}) {
+            elsif (defined $+{reportable_raw_regex}) {
                 _translate_raw_regex(
                     $+{reportable_raw_regex}, $compiletime_debugging_requested, $runtime_debugging_requested
                 );
             }
 
         # Translate non-reportable raw regexes (leave as is)...
-            elsif ($+{raw_regex}) {
+            elsif (defined $+{raw_regex}) {
                 _translate_raw_regex(
                     $+{raw_regex}, $compiletime_debugging_requested
                 );
             }
 
         # Translate directives...
-            elsif ($+{require_directive}) {
+            elsif (defined $+{require_directive}) {
                 _translate_require_directive(
                     $curr_construct, $+{condition}, $compiletime_debugging_requested
                 );
             }
-            elsif ($+{minimize_directive}) {
+            elsif (defined $+{minimize_directive}) {
                 _translate_minimize_directive(
                     $curr_construct, $+{condition}, $compiletime_debugging_requested
                 );
             }
-            elsif ($+{debug_directive}) {
+            elsif (defined $+{debug_directive}) {
                 _translate_debug_directive(
                     $curr_construct, $+{cmd}, $compiletime_debugging_requested
                 );
             }
-            elsif ($+{timeout_directive}) {
+            elsif (defined $+{timeout_directive}) {
                 _translate_timeout_directive(
                     $curr_construct, $+{timeout}, $compiletime_debugging_requested
                 );
             }
-            elsif ($+{error_directive}) {
+            elsif (defined $+{error_directive}) {
                 _translate_error_directive(
                     $curr_construct, $+{error_type}, $+{msg},
                     $compiletime_debugging_requested, $rule_name
                 );
             }
-            elsif ($+{autoerror_directive}) {
+            elsif (defined $+{autoerror_directive}) {
                 _translate_error_directive(
                     $curr_construct, $+{error_type}, q{},
                     $compiletime_debugging_requested, $rule_name
                 );
             }
-            elsif ($+{yadaerror_directive}) {
+            elsif (defined $+{yadaerror_directive}) {
                 _translate_error_directive(
                     $curr_construct,
                     ($+{yadaerror_directive} eq '???' ?  'warning' : 'error'),
@@ -1838,7 +1838,7 @@ sub _translate_subrule_calls {
                     $compiletime_debugging_requested, -$rule_name
                 );
             }
-            elsif ($+{context_directive}) {
+            elsif (defined $+{context_directive}) {
                 $nocontext = 0;
                 if ($compiletime_debugging_requested) {
                     _debug_notify( info => "   |",
@@ -1848,7 +1848,7 @@ sub _translate_subrule_calls {
                 }
                 q{};  # Remove the directive
             }
-            elsif ($+{nocontext_directive}) {
+            elsif (defined $+{nocontext_directive}) {
                 $nocontext = 1;
                 if ($compiletime_debugging_requested) {
                     _debug_notify( info => "   |",
@@ -1866,7 +1866,7 @@ sub _translate_subrule_calls {
         };
 
         # Handle the **/*%/+%/{n,m}%/etc operators...
-        if ($+{list_marker}) {
+        if (defined $+{list_marker}) {
             my $ws = $magic_ws ? $+{ws1} . $+{ws2} : q{};
             my $op = $+{op};
 
@@ -2439,7 +2439,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.026
+This document describes Regexp::Grammars version 1.027
 
 
 =head1 SYNOPSIS
@@ -4158,7 +4158,7 @@ With a C<Calculator> object set as the autoaction handler, whenever
 the C<Answer>, C<Mult>, or C<Pow> rule of the grammar matches, the
 corresponding C<Answer>, C<Mult>, or C<Pow> method of the
 C<Calculator> object will be called (with the rule's result value
-passed as it's only argument), and the result of the method will be
+passed as its only argument), and the result of the method will be
 used as the result of the rule.
 
 Note that nothing new happens when a C<Term> or C<Literal> rule matches,
@@ -5153,7 +5153,7 @@ debugging aid:
 =head1 Handling errors when parsing
 
 Assuming you have correctly debugged your grammar, the next source of problems
-will likely be invalid input (especially if that input is being provided
+will probably be invalid input (especially if that input is being provided
 interactively). So Regexp::Grammars also provides some support for detecting
 when a parse is likely to fail...and informing the user why.
 
@@ -5167,7 +5167,7 @@ the regex itself. For example:
         # Up three digits...
         <MATCH= ( \d{1,3}+ )>
 
-        # ...but less that 256...
+        # ...but less than 256...
         <require: (?{ $MATCH <= 255 })>
 
 A require expects a regex codeblock as its argument and succeeds if the final

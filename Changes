@@ -254,3 +254,9 @@ Revision history for Regexp-Grammars
     * Re-fixed minimization (by handling nocontext marker correctly)
       (thanks again Thomas!)
 
+
+
+1.027  Fri May 10 07:43:52 2013
+
+    * Fixed nasty bug where 0 used as an atom
+      (mnay thanks Arseny!)
