@@ -10,7 +10,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.027';
+our $VERSION = '1.028';
 
 
 # Load the module...
@@ -81,8 +81,7 @@ sub clear_rule_handler { undef $RULE_HANDLER; }
         # Using as a string (i.e. matching) preprocesses the precursor...
         q{""} => sub {
             my ($obj) = @_;
-            use Scalar::Util qw< refaddr >;
-            return $grammar_cache{ refaddr($obj) }
+            return $grammar_cache{ overload::StrVal($$obj) }
                 //= Regexp::Grammars::_build_grammar( ${$obj} );
         },
 
@@ -2439,7 +2438,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.027
+This document describes Regexp::Grammars version 1.028
 
 
 =head1 SYNOPSIS

@@ -259,4 +259,12 @@ Revision history for Regexp-Grammars
 1.027  Fri May 10 07:43:52 2013
 
     * Fixed nasty bug where 0 used as an atom
-      (mnay thanks Arseny!)
+      (many thanks Arseny!)
+
+
+1.028  Sat May 11 06:00:00 2013
+
+    * Fixed very nasty caching bug within interpolation support
+      (many more thanks Arseny!)
+
+
