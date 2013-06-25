@@ -1,6 +1,10 @@
 use 5.010;
 use warnings;
-use Test::More 'no_plan';
+
+use Test::More;
+use Skip_if_Perl_5_18;
+plan 'no_plan';
+
 
 # Use this class declaration to check that classes with ctors
 # actually call the ctor when objrules use them...

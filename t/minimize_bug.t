@@ -1,5 +1,4 @@
-#!/usr/bin/perl
-
+use 5.010;
 use Data::Dumper;
 use Regexp::Grammars;
 

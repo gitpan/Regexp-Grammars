@@ -1,3 +1,4 @@
+use 5.010;
 use Test::More 'no_plan';
 
 use Regexp::Grammars;

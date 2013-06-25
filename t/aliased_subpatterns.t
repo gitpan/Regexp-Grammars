@@ -22,7 +22,10 @@ my $lookbehind = do {
           <foo=( (?<!bar) (?<=ar) foo )>
     }xms;
 };
-ok !defined $WARNINGS => 'No warnings';
+
+if ($] < 5.018) {
+    ok !defined $WARNINGS => 'No warnings';
+}
 
 ok +('"abc"' =~ $parser) => 'Matched <str>';
 is $/{str}, '"abc"'      => 'Captured correctly';

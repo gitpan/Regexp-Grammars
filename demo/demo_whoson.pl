@@ -134,11 +134,11 @@ my $line = "Who's on first?";
 while (1)
 {
     say "<abbott>    $line";
-    $line = $costello ~~ $line && $/{InterpretStatement};
+    $line = $line =~ $costello && $/{InterpretStatement};
     sleep 1.5;
 
     say  "<costello>  $line";
-    $line = $abbott ~~ $line && $/{InterpretStatement};
+    $line = $line =~ $abbott  && $/{InterpretStatement};
     sleep 1.5;
 }
 

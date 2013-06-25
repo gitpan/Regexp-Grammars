@@ -2,6 +2,7 @@
 =cut
 
 package Regexp::Grammars;
+use re 'eval';
 
 use warnings;
 use strict;
@@ -10,8 +11,38 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.028';
+our $VERSION = '1.029';
 
+my $PROBLEM_WITH_5_18 = <<'END_ERROR_MSG';
+Warning: Regexp::Grammars is unsupported under Perl 5.18.
+
+Perl 5.18 changed how 'qr' constant overloadings are parsed
+and the scope in which they are subsequently compiled. This
+change appears to make it impossible to reliably create 'qr'
+overloadings that inject code blocks into a regex, as it
+prevents the overloaded regexes from compiling properly in
+many cases, even with an explicit 'use re "eval"' in scope.
+In a few cases, the use of a 'qr' overloading causes Perl
+5.18 to segfault.
+
+Because Regexp::Grammars relies on 'qr' overloads to inject
+code blocks into regexes, the module is not compatible with
+Perl 5.18. It may continue to work in some limited cases,
+but is no longer reliable.
+
+So far we have been unable to find a workaround for this
+fundamental incompatibility, and there seems little prospect
+of a fix unless the behaviour of regex parsing/compilation
+is changed again in some future release of Perl. At present,
+if you rely on Regexp::Grammars for your parsing needs, your
+alternatives are either not to upgrade to Perl 5.18, or else
+to consider switching to another parsing system, such as Marpa.
+
+We deeply regret that Regexp::Grammars can no longer be
+maintained due to these backwards-incompatible changes in
+Perl 5.18.
+
+END_ERROR_MSG
 
 # Load the module...
 sub import {
@@ -34,12 +65,31 @@ sub import {
             }
         }
     );
+
+    # Deal with 5.18 issues...
+    if ($] >= 5.018) {
+        # Issue warning...
+        require Carp;
+        Carp::carp($PROBLEM_WITH_5_18);
+
+        # Deal with (some, but not all) cases where Perl 5.18 now
+        # complains about the injection of (??{...}) and (?{...})
+        require re;
+        re->import('eval');
+
+        # Hide the standard Regexp::Grammars pseudo-variables from
+        # Perl 5.18's premature enforcement of strictures...
+        require strict;
+        strict->unimport('vars');
+    }
 }
 
 # Deactivate module's regex effect when it is "anti-imported" with 'no'...
 sub unimport {
     # Signal lexical (non-)scoping...
     $^H{'Regexp::Grammars::active'} = 0;
+    require re;
+    re->unimport('eval');
 }
 
 # Encapsulate the hoopy user-defined pragma interface...
@@ -2438,7 +2488,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.028
+This document describes Regexp::Grammars version 1.029
 
 
 =head1 SYNOPSIS
@@ -2590,7 +2640,7 @@ This document describes Regexp::Grammars version 1.028
 =head2 Directives...
 
     <require: (?{ CODE })   >  Fail if code evaluates false
-    <timeout: INT           >  Fail if matching takes too long
+    <timeout: INT           >  Fail after specified number of seconds
     <debug:   COMMAND       >  Change match-time debugging mode
     <logfile: LOGFILE       >  Change debugging log file (default: STDERR)
     <fatal:   TEXT|(?{CODE})>  Queue error message and fail parse
@@ -5489,7 +5539,7 @@ to continue attempting to match.
 
 For example:
 
-    <timeout: 10>
+    <timeout: 10>    # Give up after 10 seconds
 
 indicates that the grammar should keep attempting to match for another
 10 seconds from the point where the directive is encountered during a

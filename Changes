@@ -268,3 +268,15 @@ Revision history for Regexp-Grammars
       (many more thanks Arseny!)
 
 
+
+
+1.029  Tue Jun 25 15:44:35 2013
+
+    * Doc patch (thanks Steven)
+
+    * Added workarounds for some unfortunate changes in 5.18 behaviour
+      (thanks Steven)
+
+    * CRITICAL: Added warning regarding fundamental and intractable
+      incompatibilities with Perl 5.18, and announcing that
+      Regexp::Grammars is not supported under that version of Perl. :-(

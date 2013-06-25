@@ -1,4 +1,5 @@
 use Test::More 'no_plan';
+use 5.010;
 
 use charnames ':full';
 use Regexp::Grammars;
