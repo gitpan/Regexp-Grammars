@@ -4,6 +4,7 @@ MANIFEST
 Makefile.PL
 README
 lib/Regexp/Grammars.pm
+lib/Skip_if_Perl_5_18.pm
 t/00.load.t
 t/alias_literal.t
 t/aliased_subpatterns.t

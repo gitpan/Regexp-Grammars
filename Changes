@@ -280,3 +280,9 @@ Revision history for Regexp-Grammars
     * CRITICAL: Added warning regarding fundamental and intractable
       incompatibilities with Perl 5.18, and announcing that
       Regexp::Grammars is not supported under that version of Perl. :-(
+
+
+1.030  Wed Jun 26 07:17:41 2013
+
+    * Added essential-but-missing Skip_if_Perl_518 to the MANIFEST
+

@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.029';
+our $VERSION = '1.030';
 
 my $PROBLEM_WITH_5_18 = <<'END_ERROR_MSG';
 Warning: Regexp::Grammars is unsupported under Perl 5.18.
@@ -2488,7 +2488,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.029
+This document describes Regexp::Grammars version 1.030
 
 
 =head1 SYNOPSIS
