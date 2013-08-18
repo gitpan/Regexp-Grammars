@@ -286,3 +286,13 @@ Revision history for Regexp-Grammars
 
     * Added essential-but-missing Skip_if_Perl_518 to the MANIFEST
 
+
+
+1.031  Mon Aug 19 09:55:37 2013
+
+    * Updated warning re 5.18 incompatibilities. Some progress has been
+      made, but a complete solution is still at least a month away,
+      possibly longer.
+
+    * Added dependency on Lexical::Var under Perl 5.18 to overcome
+      problem with magic pseudo-variables

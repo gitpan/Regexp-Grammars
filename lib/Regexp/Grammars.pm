@@ -11,35 +11,44 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.030';
+our $VERSION = '1.031';
+
+my $anon_scalar_ref = \do{my $var};
+my %MAGIC_VARS = (
+    '$CAPTURE' => $anon_scalar_ref,
+    '$CONTEXT' => $anon_scalar_ref,
+    '$DEBUG'   => $anon_scalar_ref,
+    '$INDEX'   => $anon_scalar_ref,
+    '$MATCH'   => $anon_scalar_ref,
+    '%ARG'     => {},
+    '%MATCH'   => {},
+);
 
 my $PROBLEM_WITH_5_18 = <<'END_ERROR_MSG';
-Warning: Regexp::Grammars is unsupported under Perl 5.18.
+Warning: Regexp::Grammars is currently unsupported under Perl 5.18.
 
-Perl 5.18 changed how 'qr' constant overloadings are parsed
-and the scope in which they are subsequently compiled. This
-change appears to make it impossible to reliably create 'qr'
-overloadings that inject code blocks into a regex, as it
-prevents the overloaded regexes from compiling properly in
-many cases, even with an explicit 'use re "eval"' in scope.
-In a few cases, the use of a 'qr' overloading causes Perl
-5.18 to segfault.
+Perl 5.18 changed how 'qr' constant overloadings are parsed and the
+scope in which they are subsequently compiled. This change currently
+make it impossible to reliably create 'qr' overloadings that inject
+code blocks into a regex, as it prevents the overloaded regexes from
+compiling properly in many cases, even with an explicit 'use re
+"eval"' in scope.
 
-Because Regexp::Grammars relies on 'qr' overloads to inject
-code blocks into regexes, the module is not compatible with
-Perl 5.18. It may continue to work in some limited cases,
-but is no longer reliable.
+These problems have been reported, and the brave volunteers of P5P are
+currently working on fixes. However, these will not be available until
+at least 5.18.2.
 
-So far we have been unable to find a workaround for this
-fundamental incompatibility, and there seems little prospect
-of a fix unless the behaviour of regex parsing/compilation
-is changed again in some future release of Perl. At present,
-if you rely on Regexp::Grammars for your parsing needs, your
-alternatives are either not to upgrade to Perl 5.18, or else
-to consider switching to another parsing system, such as Marpa.
+Because Regexp::Grammars relies on 'qr' overloads to inject code blocks
+into regexes, the module is curently not compatible with Perl 5.18. It
+may continue to work in some limited cases, but is no longer reliable.
 
-We deeply regret that Regexp::Grammars can no longer be
-maintained due to these backwards-incompatible changes in
+At present, if you rely on Regexp::Grammars for your parsing needs, your
+alternatives are either not to upgrade to Perl 5.18, to livce with the
+problems until they are resolved (in Perl 5.18.2, we hope), or else to
+consider switching to another parsing system, such as Marpa.
+
+We deeply regret that Regexp::Grammars cannot currently be maintained
+completelt due to these backwards-incompatible changes and bugs in
 Perl 5.18.
 
 END_ERROR_MSG
@@ -77,10 +86,12 @@ sub import {
         require re;
         re->import('eval');
 
-        # Hide the standard Regexp::Grammars pseudo-variables from
-        # Perl 5.18's premature enforcement of strictures...
-        require strict;
-        strict->unimport('vars');
+        # Sanctify the standard Regexp::Grammars pseudo-variables from
+        # Perl 5.18's early enforcement of strictures...
+        require Lexical::Var;
+        for my $magic_var (keys %MAGIC_VARS) {
+            Lexical::Var->import($magic_var, $MAGIC_VARS{$magic_var});
+        }
     }
 }
 
@@ -131,6 +142,7 @@ sub clear_rule_handler { undef $RULE_HANDLER; }
         # Using as a string (i.e. matching) preprocesses the precursor...
         q{""} => sub {
             my ($obj) = @_;
+            $DB::single = 1;
             return $grammar_cache{ overload::StrVal($$obj) }
                 //= Regexp::Grammars::_build_grammar( ${$obj} );
         },
@@ -2488,7 +2500,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.030
+This document describes Regexp::Grammars version 1.031
 
 
 =head1 SYNOPSIS

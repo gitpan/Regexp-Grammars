@@ -2,7 +2,6 @@ use 5.010;
 use warnings;
 
 use Test::More;
-use Skip_if_Perl_5_18;
 plan 'no_plan';
 
 use Regexp::Grammars;
