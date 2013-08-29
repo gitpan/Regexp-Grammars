@@ -296,3 +296,8 @@ Revision history for Regexp-Grammars
 
     * Added dependency on Lexical::Var under Perl 5.18 to overcome
       problem with magic pseudo-variables
+
+
+1.032  Thu Aug 29 10:44:21 2013
+
+    * Culled stray DB::single = 1 (thanks Robert!)

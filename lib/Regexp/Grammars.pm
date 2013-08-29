@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.031';
+our $VERSION = '1.032';
 
 my $anon_scalar_ref = \do{my $var};
 my %MAGIC_VARS = (
@@ -142,7 +142,6 @@ sub clear_rule_handler { undef $RULE_HANDLER; }
         # Using as a string (i.e. matching) preprocesses the precursor...
         q{""} => sub {
             my ($obj) = @_;
-            $DB::single = 1;
             return $grammar_cache{ overload::StrVal($$obj) }
                 //= Regexp::Grammars::_build_grammar( ${$obj} );
         },
@@ -2500,7 +2499,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.031
+This document describes Regexp::Grammars version 1.032
 
 
 =head1 SYNOPSIS
