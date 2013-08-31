@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.032';
+our $VERSION = '1.033';
 
 my $anon_scalar_ref = \do{my $var};
 my %MAGIC_VARS = (
@@ -2499,7 +2499,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.032
+This document describes Regexp::Grammars version 1.033
 
 
 =head1 SYNOPSIS
