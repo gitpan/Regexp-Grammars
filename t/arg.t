@@ -1,8 +1,7 @@
-use strict;
 use 5.010;
+use strict;
 
 use Test::More;
-use Skip_if_Perl_5_18;
 plan 'no_plan';
 
 my $test_grammar = do {
@@ -19,7 +18,7 @@ my $test_grammar = do {
       |
         <keyword=(\w+)>
             <content=(.+?)>
-        <[revkeyword=unkeyword(?{ keyword => scalar reverse $MATCH{keyword} })]>
+        <revkeyword=unkeyword(?{ keyword => scalar(reverse($MATCH{keyword})) })>
 
 
         <rule: unkeyword>
@@ -30,13 +29,10 @@ my $test_grammar = do {
     }xms;
 };
 
-
-#ok 'fooxdaa' !~ $test_grammar => 'Fail';
-
-ok 'fooxoof' =~ $test_grammar     => 'Match reverse';
-is $/{keyword}, 'foo'             => 'Keyword as expected';
-is $/{content}, 'x'               => 'Content as expected';
-is_deeply $/{revkeyword}, ['oof'] => 'Revkeyword as expected';
+ok 'fooxoof' =~ $test_grammar => 'Match reverse';
+is $/{keyword}, 'foo'         => 'Keyword as expected';
+is $/{content}, 'x'           => 'Content as expected';
+is $/{revkeyword}, 'oof'      => 'Revkeyword as expected';
 
 ok 'fooxendfoo' =~ $test_grammar => 'Match end';
 is $/{keyword}, 'foo'            => 'Keyword as expected';

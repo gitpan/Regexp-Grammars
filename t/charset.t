@@ -2,7 +2,6 @@ use 5.010;
 use warnings;
 
 use Test::More;
-use Skip_if_Perl_5_18;
 plan 'no_plan';
 
 use Regexp::Grammars;
@@ -12,21 +11,21 @@ my $bracket_bug = qr{
     <Bracketed>
 
     <token: Bracketed>
-        \[ <text=( [^!#\]]+ )> \]
+        \[ <text=( [^!\]]+ )> \]
 }xms;
 
 my $escaped_bs = qr{
     <Bracketed>
 
     <token: Bracketed>
-        \[ <text=( [^!#\\]+ )> \]
+        \[ <text=( [^!\\]+ )> \]
 }xms;
 
 my $old_bracket = qr{
     <Bracketed>
 
     <token: Bracketed>
-        \[ <text=( [^]!#]+ )> \]
+        \[ <text=( [^]!]+ )> \]
 }xms;
 
 no Regexp::Grammars;

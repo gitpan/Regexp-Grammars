@@ -308,3 +308,17 @@ Revision history for Regexp-Grammars
     * Listed dependency on Lexical::Var under Perl 5.18 to overcome
       problem with magic pseudo-variables (thanks Andreas!)
 
+
+
+1.034  Wed Jun 11 06:50:04 2014
+
+    * Reverted actual encoding to match nominated encoding (i.e. Latin-1)
+      (thanks Olivier)
+
+    * Fixed last bug preventing module from passing
+      its own test suite under 5.20.
+
+    * Gave up (for the present) on Perl 5.18 compatibility.
+
+    * Noted limitations of passing %MATCH values as subrule args
+      under 5.18+

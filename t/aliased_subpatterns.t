@@ -23,7 +23,7 @@ my $lookbehind = do {
     }xms;
 };
 
-if ($] < 5.018) {
+if ($] < 5.018 || $] >= 5.020) {
     ok !defined $WARNINGS => 'No warnings';
 }
 

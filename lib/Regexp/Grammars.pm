@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.033';
+our $VERSION = '1.034';
 
 my $anon_scalar_ref = \do{my $var};
 my %MAGIC_VARS = (
@@ -25,32 +25,15 @@ my %MAGIC_VARS = (
 );
 
 my $PROBLEM_WITH_5_18 = <<'END_ERROR_MSG';
-Warning: Regexp::Grammars is currently unsupported under Perl 5.18.
+Warning: Regexp::Grammars is currently unsupported (and unsupportable)
+         under Perl 5.18 due to a bug in regex parsing under that version.
 
-Perl 5.18 changed how 'qr' constant overloadings are parsed and the
-scope in which they are subsequently compiled. This change currently
-make it impossible to reliably create 'qr' overloadings that inject
-code blocks into a regex, as it prevents the overloaded regexes from
-compiling properly in many cases, even with an explicit 'use re
-"eval"' in scope.
+         The module runs correctly under Perl 5.16 and earlier.
 
-These problems have been reported, and the brave volunteers of P5P are
-currently working on fixes. However, these will not be available until
-at least 5.18.2.
-
-Because Regexp::Grammars relies on 'qr' overloads to inject code blocks
-into regexes, the module is curently not compatible with Perl 5.18. It
-may continue to work in some limited cases, but is no longer reliable.
-
-At present, if you rely on Regexp::Grammars for your parsing needs, your
-alternatives are either not to upgrade to Perl 5.18, to livce with the
-problems until they are resolved (in Perl 5.18.2, we hope), or else to
-consider switching to another parsing system, such as Marpa.
-
-We deeply regret that Regexp::Grammars cannot currently be maintained
-completelt due to these backwards-incompatible changes and bugs in
-Perl 5.18.
-
+         The module also runs correctly under Perl 5.20 or later
+         (except that one special edge-case of rule arguments is
+         no longer supported: See "Parametric Subrules" in the
+         module's documentation for details).
 END_ERROR_MSG
 
 # Load the module...
@@ -78,11 +61,13 @@ sub import {
     # Deal with 5.18 issues...
     if ($] >= 5.018) {
         # Issue warning...
-        require Carp;
-        Carp::carp($PROBLEM_WITH_5_18);
+        if ($] < 5.020) {
+            require Carp;
+            Carp::croak($PROBLEM_WITH_5_18);
+        }
 
-        # Deal with (some, but not all) cases where Perl 5.18 now
-        # complains about the injection of (??{...}) and (?{...})
+        # Deal with cases where Perl 5.18+ complains about
+        # the injection of (??{...}) and (?{...})
         require re;
         re->import('eval');
 
@@ -2025,7 +2010,7 @@ sub _open_log {
 sub _invert_delim {
     my ($delim) = @_;
     $delim = reverse $delim;
-    $delim =~ tr/<>[]{}()Â«Â»`'/><][}{)(Â»Â«'`/;
+    $delim =~ tr/<>[]{}()«»`'/><][}{)(»«'`/;
     return quotemeta $delim;
 }
 
@@ -2499,7 +2484,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.033
+This document describes Regexp::Grammars version 1.034
 
 
 =head1 SYNOPSIS
@@ -3325,6 +3310,19 @@ you can just write:
 
         <end_tag( prefix=>'end', :tag )>
 
+Note that, from Perl 5.20 onwards, due to changes in the way that
+Perl parses regexes, Regexp::Grammars does not support explicitly passing
+elements of C<%MATCH> as argument values within a list subrule
+(yeah, it's a very specific and obscure edge-case):
+
+        <[end_tag(?{ prefix=>'end', tag=>$MATCH{tag} })]>   # Does not work
+
+Note, however, that the shortcut:
+
+        <[end_tag( prefix=>'end', :tag )]>
+
+still works correctly.
+
 
 =head3 Accessing subrule arguments more cleanly
 
@@ -3962,7 +3960,7 @@ this problem rarely arises in practice.
 
 
 I<B<Note:> Prior to Regexp::Grammars version 1.020, the syntax for matchrefs
-was C<<< <\I<IDENTIFIER>> >>> instead of C<<< <\_I<IDENTIFIER>> >>>. This 
+was C<<< <\I<IDENTIFIER>> >>> instead of C<<< <\_I<IDENTIFIER>> >>>. This
 created problems when the identifier started with any of C<l>, C<u>, C<L>,
 C<U>, C<Q>, or C<E>, so the syntax has had to be altered in a backwards
 incompatible way. It will not be altered again.
@@ -4037,7 +4035,7 @@ Like matchrefs, invertrefs come in the usual range of flavours:
     <[ALIAS=/ident]>    # Match inverse and push on @{$MATCH{ident}}
 
 The character pairs that are reversed during mirroring are: C<{> and C<}>,
-C<[> and C<]>, C<(> and C<)>, C<< < >> and C<< > >>, C<Â«> and C<Â»>,
+C<[> and C<]>, C<(> and C<)>, C<< < >> and C<< > >>, C<«> and C<»>,
 C<`> and C<'>.
 
 The following mnemonics may be useful in distinguishing inverserefs from
