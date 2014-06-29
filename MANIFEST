@@ -4,7 +4,6 @@ MANIFEST
 Makefile.PL
 README
 lib/Regexp/Grammars.pm
-lib/Skip_if_Perl_5_18.pm
 t/00.load.t
 t/alias_literal.t
 t/aliased_subpatterns.t
@@ -95,4 +94,6 @@ t/seplist_rawhash.t
 t/seplist_starhash.t
 t/error_non_hash_based.t
 t/minimize_bug.t
+t/missing_slash_x.t
+t/one_liner.t
 META.yml                                 Module meta-data (added by MakeMaker)

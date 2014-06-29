@@ -89,7 +89,7 @@ no Regexp::Grammars;
 {
     local $SIG{__WARN__} = sub {
         my ($errmsg) = @_;
-        is $errmsg, "Can't match against <grammar: List::Generic>\n"
+        is $errmsg, "Can't match directly against a pure grammar: <grammar: List::Generic>\n"
                                     => "Can't match against pure grammars";
     };
     ok "" !~ $base_grammar          => "Match against pure grammar failed";

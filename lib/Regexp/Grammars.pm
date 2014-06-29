@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.034';
+our $VERSION = '1.035';
 
 my $anon_scalar_ref = \do{my $var};
 my %MAGIC_VARS = (
@@ -858,13 +858,16 @@ my $QUALIDENT = qr{ (?: $IDENT :: )*+ $IDENT }xms;
 
 # Match balanced parentheses, taking into account \-escapes and []-escapes...
 my $PARENS = qr{
-    (?&PARENS)
+    (?&VAR_PARENS)
     (?(DEFINE)
-        (?<PARENS> \( (?: \\. | (?&PARENS) | (?&CHARSET) | [^][()\\]++)*+ \) )
+        (?<VAR_PARENS> \( (?: \\. | (?&VAR_PARENS) | (?&CHARSET) | [^][()\\]++)*+ \) )
         (?<CHARSET> \[ \^?+ \]?+ (?: \[:\w+:\] | \\. | [^]])*+ \] )
 
     )
 }xms;
+
+# Match a <ws:...> directive within rules...
+my $WS_PATTERN = qr{<ws: ((?: \\. | [^\\()>]++ | $PARENS )*+) >}xms;
 
 
 #=====[ UTILITY SUBS FOR ERROR AND WARNING MESSAGES ]========
@@ -1316,9 +1319,10 @@ sub _translate_separated_list {
 }
 
 sub _translate_subrule_call {
-    my ( $grammar_name, $construct, $alias, $subrule, $args, $savemode, $postmodifier,
-         $debug_build, $debug_runtime, $timeout, $valid_subrule_names_ref, $nocontext)
-        = @_;
+    my ($source_line, $source_file, $rulename, $grammar_name, $construct, $alias,
+        $subrule, $args, $savemode, $postmodifier,
+        $debug_build, $debug_runtime, $timeout, $valid_subrule_names_ref, $nocontext)
+            = @_;
 
     # Translate arg list, if provided...
     my $arg_desc;
@@ -1363,9 +1367,10 @@ sub _translate_subrule_call {
     # Shortcircuit if unknown subrule invoked...
     if (!$valid_subrule_names_ref->{$subrule}) {
         _debug_notify( error =>
-            qq{Found call to $construct, but no <rule: $subrule> or},
-            qq{<token: $subrule> was defined in the grammar},
-            qq{(Did you misspell the rule name or forget to define the rule?)},
+            qq{Found call to $construct inside definition of $rulename},
+            qq{near $source_file line $source_line.},
+            qq{But no <rule: $subrule> or <token: $subrule> was defined in the grammar},
+            qq{(Did you misspell $construct? Or forget to define the rule?)},
             q{},
         );
         return "(?{Regexp::Grammars::_debug_fatal('$construct')})(*COMMIT)(*FAIL)";
@@ -1468,7 +1473,8 @@ sub _translate_rule_def {
 
 # Locate any valid <...> sequences and replace with native regex code...
 sub _translate_subrule_calls {
-    my ($grammar_name,
+    my ($source_file, $source_line,
+        $grammar_name,
         $grammar_spec,
         $compiletime_debugging_requested,
         $runtime_debugging_requested,
@@ -1481,9 +1487,13 @@ sub _translate_subrule_calls {
         $nocontext,
     ) = @_;
 
+    my $pretty_rule_name = $rule_name ? ($magic_ws ? '<rule' : '<token') . ": $rule_name>"
+                                      : 'main regex (before first rule)';
+
     # Remember the preceding construct, so as to implement the +% etc. operators...
     my $prev_construct   = q{};
     my $prev_translation = q{};
+    my $curr_line_num = 1;
 
     # Translate all other calls (MAIN GRAMMAR FOR MODULE)...
     $grammar_spec =~ s{
@@ -1596,6 +1606,19 @@ sub _translate_subrule_calls {
         )
         > (?<modifier> \s* (?! (?&SEPLIST_OP) ) [?+*][?+]? | )
       |
+        (?<ws_directive>
+            $WS_PATTERN
+        )
+      |
+        (?<incomplete_request>
+            < [^>\n]* [>\n]
+        )
+      |
+        (?<loose_quantifier>
+            (?<! \| ) \s++ (?&QUANTIFIER)
+          | (?<! \A ) \s++ (?&QUANTIFIER)
+        )
+      |
         (?<reportable_raw_regex>
             (?: \\[^shv]
             |   (?! (?&PARENCODE) ) (?&PARENS)
@@ -1634,11 +1657,12 @@ sub _translate_subrule_calls {
         (?<ARG>       (?&VAR)  |  (?&KEY) \s* => \s* (?&LITERAL)                                         )
         (?<VAR>       : (?&IDENT)                                                                        )
         (?<KEY>       (?&IDENT) | (?&LITERAL)                                                            )
-        (?<QUANTIFIER> [*+?][+?]? | \{ \d+,?\d* \} [+?]?i                                                )
+        (?<QUANTIFIER> [*+?][+?]? | \{ \d+,?\d* \} [+?]?                                                 )
     )
     }{
-        my $curr_construct = $+{construct};
-        my $alias          = ($+{alias}//'MATCH') eq 'MATCH' ? q{'='} : qq{'$+{alias}'};
+        my $curr_construct   = $+{construct};
+        my $list_marker      = $+{list_marker} // q{};
+        my $alias            = ($+{alias}//'MATCH') eq 'MATCH' ? q{'='} : qq{'$+{alias}'};
 
         # Determine and remember the necessary translation...
         my $curr_translation = do{
@@ -1698,6 +1722,8 @@ sub _translate_subrule_calls {
         # Translate subrule calls of the form: <ALIAS=RULENAME>...
             elsif (defined $+{alias_subrule_scalar}) {
                 _translate_subrule_call(
+                    $source_line, $source_file,
+                    $pretty_rule_name,
                     $grammar_name,
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1709,6 +1735,8 @@ sub _translate_subrule_calls {
             }
             elsif (defined $+{alias_subrule_list}) {
                 _translate_subrule_call(
+                    $source_line, $source_file,
+                    $pretty_rule_name,
                     $grammar_name,
                     $curr_construct, $alias, $+{subrule}, $+{args}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1731,6 +1759,8 @@ sub _translate_subrule_calls {
                 }
 
                 $pre . _translate_subrule_call(
+                    $source_line, $source_file,
+                    $pretty_rule_name,
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, $type, q{},
                     $compiletime_debugging_requested,
@@ -1743,6 +1773,8 @@ sub _translate_subrule_calls {
             }
             elsif (defined $+{self_subrule_scalar_nocap}) {
                 _translate_subrule_call(
+                    $source_line, $source_file,
+                    $pretty_rule_name,
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'noncapturing', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1754,6 +1786,8 @@ sub _translate_subrule_calls {
             }
             elsif (defined $+{self_subrule_scalar}) {
                 _translate_subrule_call(
+                    $source_line, $source_file,
+                    $pretty_rule_name,
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'scalar', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1765,6 +1799,8 @@ sub _translate_subrule_calls {
             }
             elsif (defined $+{self_subrule_list}) {
                 _translate_subrule_call(
+                    $source_line, $source_file,
+                    $pretty_rule_name,
                     $grammar_name,
                     $curr_construct, qq{'$+{subrule}'}, $+{subrule}, $+{args}, 'list', $+{modifier},
                     $compiletime_debugging_requested,
@@ -1830,7 +1866,7 @@ sub _translate_subrule_calls {
 
         # Translate reportable raw regexes (add debugging support)...
             elsif (defined $+{reportable_raw_regex}) {
-                _translate_raw_regex(
+                _translate_raw_regex( 
                     $+{reportable_raw_regex}, $compiletime_debugging_requested, $runtime_debugging_requested
                 );
             }
@@ -1903,15 +1939,54 @@ sub _translate_subrule_calls {
                 }
                 q{};  # Remove the directive
             }
+            elsif (defined $+{ws_directive}) {
+                if ($compiletime_debugging_requested) {
+                    _debug_notify( info => "   |",
+                                           "   |...Treating $curr_construct as:",
+                                           "   |       \\ Change whitespace matching for the current rule"
+                    );
+                }
+                $curr_construct;
+            }
+
+        # Something that looks like a rule call or directive, but isn't...
+            elsif (defined $+{incomplete_request}) {
+                my $request = $+{incomplete_request};
+                my $inferred_type = $request =~ /:/ ? 'directive' : 'subrule call';
+                    _debug_notify( warn =>
+                        qq{Possible failed attempt to specify a $inferred_type:},
+                        qq{    $request},
+                        qq{near $source_file line $source_line},
+                        qq{(If you meant to match literally, use: \\$request)},
+                        q{},
+                    );
+                $request;
+            }
+
+        # A quantifier that isn't quantifying anything...
+            elsif (defined $+{loose_quantifier}) {
+                my $quant = $+{loose_quantifier};
+                   $quant =~ s{^\s+}{};
+                my $literal = quotemeta($quant);
+                _debug_notify( fatal =>
+                    qq{Quantifier that doesn't quantify anything: $quant},
+                    qq{in declaration of $pretty_rule_name},
+                    qq{near $source_file line $source_line},
+                    qq{(Did you mean to match literally? If so, try: $literal)},
+                    q{},
+                );
+                exit(1);
+            }
 
         # There shouldn't be any other possibility...
             else {
-                die qq{Internal error: this shouldn't happen!\nNear '$curr_construct': };
+                die qq{Internal error: this shouldn't happen!\n},
+                    qq{Near '$curr_construct' in $pretty_rule_name\n};
             }
         };
 
         # Handle the **/*%/+%/{n,m}%/etc operators...
-        if (defined $+{list_marker}) {
+        if ($list_marker) {
             my $ws = $magic_ws ? $+{ws1} . $+{ws2} : q{};
             my $op = $+{op};
 
@@ -1983,7 +2058,8 @@ sub _autoflush {
 }
 
 sub _open_log {
-    my ($mode, $filename) = @_;
+    my ($mode, $filename, $from_where) = @_;
+    $from_where //= q{};
 
     # Special case: '-' --> STDERR
     if ($filename eq q{-}) {
@@ -1999,10 +2075,11 @@ sub _open_log {
         local *Regexp::Grammars::LOGFILE = *STDERR{IO};
         _debug_notify( warn =>
             qq{Unable to open log file '$filename'},
+            ($from_where ? $from_where : ()),
             qq{($!)},
             qq{Defaulting to STDERR instead.},
+            q{},
         );
-        _debug_notify( q{} => q{} );
         return *STDERR{IO};
     }
 }
@@ -2037,7 +2114,7 @@ sub _ancestry_of {
 
 # Detect and translate any requested grammar inheritances...
 sub _extract_inheritances {
-    my ($regex, $compiletime_debugging_requested, $derived_grammar_name) = @_;
+    my ($source_line, $source_file, $regex, $compiletime_debugging_requested, $derived_grammar_name) = @_;
 
 
     # Detect and remove inheritance requests...
@@ -2062,12 +2139,13 @@ sub _extract_inheritances {
             push @{$CACHE.$derived_grammar_name.'::ISA'}, $CACHE.$grammar_name;
         }
         else {
-            my (undef, $file, $line) = caller(2);
             _debug_notify( fatal =>
                 "Inheritance from unknown grammar requested",
-                "in <extends: $grammar_name>",
-                "at $file line $line",
+                "by <extends: $grammar_name> directive",
+                "in regex grammar declared at $source_file line $source_line",
+                q{},
             );
+            exit(1);
         }
     }
 
@@ -2083,48 +2161,71 @@ sub _extract_inheritances {
     return $implementation, \%subrule_names;
 }
 
-# Pattern for <ws:...> directive within rules...
-my $WS_PATTERN = qr{<ws: ((?: \\. | [^\\()>]++ | $PARENS )*+) >}xms;
-
 # Transform grammar-augmented regex into pure Perl 5.10 regex...
 sub _build_grammar {
     my ($grammar_spec) = @_;
     $grammar_spec .= q{};
 
-    # Check for dubious repeated <SUBRULE> constructs that throw away captures...
-    my @dubious = $grammar_spec =~ m{
-           < (?! \[ )                     # not <[SUBRULE]>
-             ( $IDENT (?: = [^>]*)? )     # but <SUBRULE> or <SUBRULE=*>
-           > \s* (                        # followed by a quantifier...
-             [+*][?+]?                    #    either symbolic
-           | \{\d+(?:,\d*)?\}[?+]?        #    or numeric
-           )
-    }gxms;
+    # Check for lack of Regexp::Grammar-y constructs and short-circuit...
+    if ($grammar_spec !~ m{ < (?: [.?![:%\\/]? [^\W\d]\w* [^>]* | [.?!]{3} ) > }xms) {
+        return $grammar_spec;
+    }
 
-    # Report dubiousities...
-    while (@dubious) {
-        my ($rule, $qual) = splice @dubious, 0, 2;
-        _debug_notify( warn =>
-            qq{Repeated subrule <$rule>$qual will only capture its final match},
-            qq{(Did you mean <[$rule]>$qual instead?)},
-            q{},
-        )
+    # Remember where we parked...
+    my ($source_file, $source_line) = (caller 1)[1,2];
+    $source_line -= $grammar_spec =~ tr/\n//;
+
+    # Check for dubious repeated <SUBRULE> constructs that throw away captures...
+    my $dubious_line = $source_line;
+    while ($grammar_spec =~ m{
+           (.*?)
+           (
+            < (?! \[ )                     # not <[SUBRULE]>
+                ( $IDENT (?: = [^>]*)? )   # but <SUBRULE> or <SUBRULE=*>
+            > \s*
+            (                              # followed by a quantifier...
+                [+*][?+]?                  #    either symbolic
+              | \{\d+(?:,\d*)?\}[?+]?      #    or numeric
+            )
+           )
+        }gxms) {
+            my ($prefix, $match, $rule, $qual) = ($1, $2, $3, $4);
+            $dubious_line += $prefix =~ tr/\n//;
+            _debug_notify( warn =>
+                qq{Repeated subrule <$rule>$qual},
+                qq{at $source_file line $dubious_line},
+                qq{will only capture its final match},
+                qq{(Did you mean <[$rule]>$qual instead?)},
+                q{},
+            );
+            $dubious_line += $match =~ tr/\n//;
     }
 
     # Check for dubious non-backtracking <SUBRULE> constructs...
-    @dubious
-        = $grammar_spec
-            =~ m{ < ( [^>]+ ) > \s* ([?+*][+]|\{.*\}[+]) }gxms;
-
-    # Report dubiousities...
-    while (@dubious) {
-        my ($rule, $qual) = splice @dubious, 0, 2;
-        my $safe_qual = substr($qual,0,-1);
-        _debug_notify( warn =>
-            qq{Non-backtracking subrule <$rule>$qual not fully supported yet},
-            qq{(If grammar does not work try <$rule>$safe_qual instead)},
-            q{},
-        )
+    $dubious_line = $source_line;
+    while (
+        $grammar_spec =~ m{
+            (.*?)
+            (
+                <
+                    (?! (?:obj)? (?:rule: | token ) )
+                    ( [^>]+ )
+                >
+                \s*
+                ( [?+*][+] | \{.*\}[+] )
+            )
+        }gxms) {
+            my ($prefix, $match, $rule, $qual) = ($1, $2, $3, $4);
+            $dubious_line += $prefix =~ tr/\n//;
+            my $safe_qual = substr($qual,0,-1);
+            _debug_notify( warn =>
+                qq{Non-backtracking subrule call <$rule>$qual},
+                qq{at $source_file line $dubious_line},
+                qq{may not revert correctly during backtracking.},
+                qq{(If grammar does not work, try <$rule>$safe_qual instead)},
+                q{},
+            );
+            $dubious_line += $match =~ tr/\n//;
     }
 
     # Check whether a log file was specified...
@@ -2132,12 +2233,13 @@ sub _build_grammar {
     local *Regexp::Grammars::LOGFILE = *Regexp::Grammars::LOGFILE;
     my $logfile = q{-};
 
+    my $log_where = "for regex grammar defined at $source_file line $source_line";
     $grammar_spec =~ s{ ^ [^#]* < logfile: \s* ([^>]+?) \s* > }{
         $logfile = _timestamp($1);
 
         # Presence of <logfile:...> implies compile-time logging...
         $compiletime_debugging_requested = 1;
-        *Regexp::Grammars::LOGFILE = _open_log('>',$logfile);
+        *Regexp::Grammars::LOGFILE = _open_log('>',$logfile, $log_where );
 
         # Delete <logfile:...> directive...
         q{};
@@ -2163,10 +2265,10 @@ sub _build_grammar {
     my $pre_match_debug
         = $runtime_debugging_requested
             ? qq{(?{; *Regexp::Grammars::LOGFILE
-                        = Regexp::Grammars::_open_log('>>','$logfile');
+                        = Regexp::Grammars::_open_log('>>','$logfile', '$log_where');
                       Regexp::Grammars::_init_try_stack(); })}
             : qq{(?{; *Regexp::Grammars::LOGFILE
-                        = Regexp::Grammars::_open_log('>>','$logfile'); })}
+                        = Regexp::Grammars::_open_log('>>','$logfile', '$log_where'); })}
             ;
 
     # After entire match, report whether successful or not...
@@ -2178,6 +2280,9 @@ sub _build_grammar {
             : q{}
             ;
 
+    # Remove comment lines...
+    $grammar_spec =~ s{^ ([^#\n]*) \s \# [^\n]* }{$1}gxms;
+
     # Subdivide into rule and token definitions, preparing to process each...
     # REWRITE THIS, USING (PROBABLY NEED TO REFACTOR ALL GRAMMARS TO REUSe
     # THESE COMPONENTS:
@@ -2187,25 +2292,39 @@ sub _build_grammar {
     #   (?<LITERAL>   (?&NUMBER) | (?&STRING) | (?&VAR)                                                  )
     #   (?<VAR>       : (?&IDENT)                                                                        )
     my @defns = split m{
-            ^ [^#\n]*? \K < (obj|)(rule|token) \s*+ :
+            (< (obj|)(rule|token) \s*+ :
               \s*+ ((?:${IDENT}::)*+) (?: ($IDENT) \s*+ = \s*+ )?+
               ($IDENT)
-            \s* >
+            \s* >)
         }xms, $grammar_spec;
 
     # Extract up list of names of defined rules/tokens...
-    # (Name is every 4th item out of every five, skipping the first item)
-    my @subrule_names = @defns[ map { $_ * 6 + 5 } 0 .. ((@defns-1)/6-1) ];
+    # (Name is every 6th item out of every seven, skipping the first item)
+    my @subrule_names = @defns[ map { $_ * 7 + 6 } 0 .. ((@defns-1)/7-1) ];
+    my @defns_copy = @defns[1..$#defns];
     my %subrule_names;
 
     # Build a look-up table of subrule names, checking for duplicates...
+    my $defn_line = $source_line + $defns[0] =~ tr/\n//;
+    my %first_decl_explanation;
     for my $subrule_name (@subrule_names) {
-        if (++$subrule_names{$subrule_name} == 2) {
+        my ($full_decl, $objectify, $type, $qualifier, $name, $callname, $body) = splice(@defns_copy, 0, 7);
+        if (++$subrule_names{$subrule_name} > 1) {
             _debug_notify( warn =>
-                "Multiple definitions for <$subrule_name>",
-                "(only the first definition will be used)",
+                "Redeclaration of <$objectify$type: $subrule_name>",
+                "at $source_file line $defn_line",
+                "will be ignored.",
+                @{ $first_decl_explanation{$subrule_name} },
+                q{},
             );
         }
+        else {
+            $first_decl_explanation{$subrule_name} = [
+                "(Hidden by the earlier declaration of <$objectify$type: $subrule_name>",
+                " at $source_file line $defn_line)"
+            ];
+        }
+        $defn_line += ($full_decl.$body) =~ tr/\n//;
     }
 
     # Add the built-ins...
@@ -2215,9 +2334,10 @@ sub _build_grammar {
     my $main_regex = shift @defns;
     if ($main_regex =~ m{\A (?: \s++ | \(\?\# [^)]* \) | \# [^\n]++ )* \z}xms) {
         _debug_notify( error =>
-            "No main regex specified before rule definitions.",
+            "No main regex specified before rule definitions",
+            "in regex grammar declared at $source_file line $source_line",
             "Grammar will never match anything.",
-            "(Did you forget a <grammar:...> specification?)",
+            "(Or did you forget a <grammar:...> specification?)",
             q{},
         );
     }
@@ -2249,6 +2369,7 @@ sub _build_grammar {
     # Extract any inheritance information...
     my ($inherited_rules, $inherited_subrule_names)
         = _extract_inheritances(
+            $source_line, $source_file,
             $main_regex,
             $compiletime_debugging_requested,
             $grammar_name
@@ -2289,17 +2410,21 @@ sub _build_grammar {
 
         # Remove the grammar directive...
         $main_regex =~ s{
-            $GRAMMAR_DIRECTIVE
-          | < debug: \s* (run | match | step | try | on | off | same ) \s* >
-        }{}gxms;
+            ( $GRAMMAR_DIRECTIVE
+            | < debug: \s* (run | match | step | try | on | off | same ) \s* >
+            )
+        }{$source_line += $1 =~ tr/\n//; q{}}gexms;
 
         # Check for anything else in the main regex...
-        if ($main_regex =~ /\S/) {
+        if ($main_regex =~ /\A(\s*)\S/) {
+            $source_line += $1 =~ tr/\n//;
             _debug_notify( warn =>
                 "Unexpected item before first subrule specification",
-                "in definition of <grammar: $grammar_name>:",
+                "in definition of <grammar: $grammar_name>",
+                "at $source_file line $source_line:",
                 map({ "    $_"} grep /\S/, split "\n", $main_regex),
                 "(this will be ignored when defining the grammar)",
+                q{},
             );
         }
 
@@ -2320,6 +2445,7 @@ sub _build_grammar {
 
         # Any actual regex is processed first...
         $regex = _translate_subrule_calls(
+            $source_file, $source_line,
             $grammar_name,
             $main_regex,
             $compiletime_debugging_requested,
@@ -2346,10 +2472,13 @@ sub _build_grammar {
         }
     }
 
+    # Update line number...
+    $source_line += $main_regex =~ tr/\n//;
+
     #  Then iterate any following rule definitions...
     while (@defns) {
         # Grab details of each rule defn (as extracted by previous split)...
-        my ($objectify, $type, $qualifier, $name, $callname, $body) = splice(@defns, 0, 6);
+        my ($full_decl, $objectify, $type, $qualifier, $name, $callname, $body) = splice(@defns, 0, 7);
         $name //= $callname;
         my $qualified_name = $grammar_name.'::'.$callname;
 
@@ -2362,7 +2491,8 @@ sub _build_grammar {
         }
 
         # Translate any nested <...> constructs...
-        $body = _translate_subrule_calls(
+        my $trans_body = _translate_subrule_calls(
+            $source_file, $source_line,
             $grammar_name,
             $body,
             $compiletime_debugging_requested,
@@ -2391,15 +2521,33 @@ sub _build_grammar {
 
         # Rules make non-code literal whitespace match textual whitespace...
         if ($type eq 'rule') {
-
             # Implement any local whitespace definition...
-            if ($body =~ s{$WS_PATTERN}{}oxms) {
+            my $first_ws = 1;
+            WS_DIRECTIVE:
+            while ($trans_body =~ s{$WS_PATTERN}{}oxms) {
                 my $defn = $1;
                 if ($defn !~ m{\S}xms) {
                     _debug_notify( warn =>
-                        qq{Ignoring useless empty <ws:> directive.},
-                        qq{(Did you mean to use a token instead?)},
+                        qq{Ignoring useless empty <ws:> directive},
+                        qq{in definition of <rule: $name>},
+                        qq{near $source_file line $source_line},
+                        qq{(Did you mean <ws> instead?)},
+                        q{},
                     );
+                    next WS_DIRECTIVE;
+                }
+                elsif (!$first_ws) {
+                    _debug_notify( warn =>
+                        qq{Ignoring useless extra <ws:$defn> directive},
+                        qq{in definition of <rule: $name>},
+                        qq{at $source_file line $source_line},
+                        qq{(No more than one is permitted per rule!)},
+                        q{},
+                    );
+                    next WS_DIRECTIVE;
+                }
+                else {
+                    $first_ws = 0;
                 }
                 state $ws_counter = 0;
                 $ws_counter++;
@@ -2409,22 +2557,43 @@ sub _build_grammar {
 
             # Implement auto-whitespace...
             state $CODE_OR_SPACE = qr{
-                  \( \?\?? (?&BRACED) \)
-                | (?<! \A) \s++ (?! \| | (?: \) \s* )? \z | \(\(?\?\&ws\) | \(\?\??\{ | \\s )
+                (?<ignorable_space>          # These are not magic...
+                    \( \?\?? (?&BRACED) \)   #     Embedded code blocks
+                  | \s++                     #     Whitespace not followed by...
+                    (?= \|                   #         ...an OR
+                      | (?: \) \s* )? \z     #         ...the end of the rule
+                      | \(\(?\?\&ws\)        #         ...an explicit ws match
+                      | \(\?\??\{            #         ...an embedded code block
+                      | \\s                  #         ...an explicit space match
+                    )
+                )
+                |
+                (?<magic_space> \s++ )       # All other whitespace is magic
+
                 (?(DEFINE) (?<BRACED> \{ (?: \\. | (?&BRACED) | [^{}] )* \} ) )
             }xms;
-            $body =~ s{($CODE_OR_SPACE)}
-                      [  substr($1,0,3) eq '(?{'
-                      || substr($1,0,4) eq '(??{' ? $1 : $local_ws_call ]exmsg;  #}
+            $trans_body =~ s{($CODE_OR_SPACE)}{ $+{ignorable_space} // $local_ws_call }exmsg;
         }
-        elsif ($body =~ s{$WS_PATTERN}{}oxms) {
-            _debug_notify( warn =>
-                qq{Ignoring useless <ws:$1> directive in a token definition.},
-                qq{(Did you mean to use a rule instead?)},
-            );
+        else {
+            while ($trans_body =~ s{$WS_PATTERN}{}oxms) {
+                _debug_notify( warn =>
+                    qq{Ignoring useless <ws:$1> directive},
+                    qq{in definition of <token: $name>},
+                    qq{at $source_file line $source_line},
+                    qq{(Did you need to define <rule: $name> instead of <token: $name>?)},
+                    q{},
+                );
+            }
         }
 
-        $regex .= _translate_rule_def( $type, $qualifier, $name, $callname, $qualified_name, $body, $objectify, $local_ws_defn );
+        $regex
+            .= "\n###############[ $source_file line $source_line ]###############\n"
+            .  _translate_rule_def(
+                 $type, $qualifier, $name, $callname, $qualified_name, $trans_body, $objectify, $local_ws_defn
+               );
+
+        # Update line number...
+        $source_line += ($full_decl.$body) =~ tr/\n//;
     }
 
     # Insert checkpoints into any user-defined code block...
@@ -2435,29 +2604,11 @@ sub _build_grammar {
     # Check for any suspicious left-overs from the start of the regex...
     pos $regex = 0;
 
-    # Report anything that starts like a subrule, but isn't...
-    my %seen = ( '<ws>' => 1, '<hk>' => 1, '<matchpos>' => 1, '<matchline>' => 1); # autogenerated
-    while ($regex =~ m/( (?<! \(\? | q\{ ) (?<! \\) < [[.]* $IDENT \s* (:?) .*? [\n>] )/gxms) {
-        my $construct = $1;
-        my $something = $2 ? 'directive' : 'subrule call';
-
-        # Only report potential problems once...
-        next if $seen{$construct}++;
-
-        # Also explain how to indicate the construct is intentional...
-        _debug_notify( warn =>
-            qq{Possible invalid $something:},
-            qq{    $construct},
-            qq{(To silence this warning, use: \\$construct},
-        );
-        _debug_notify( q{} => q{} );
-    }
-
     # If a grammar definition, save grammar and return a placeholder...
     if ($is_grammar) {
         $user_defined_grammar{$grammar_name} = $regex;
         return qq{(?{
-            warn "Can't match against <grammar: $grammar_name>\n";
+            warn "Can't match directly against a pure grammar: <grammar: $grammar_name>\n";
         })(*COMMIT)(?!)};
     }
     # Otherwise, aggregrate the final grammar...
@@ -2469,8 +2620,8 @@ sub _build_grammar {
 sub _complete_regex {
     my ($regex, $pre_match_debug, $post_match_debug, $nocontext) = @_;
 
-    return $nocontext ? qq{$pre_match_debug$PROLOGUE$regex$EPILOGUE_NC$post_match_debug}
-                      : qq{$pre_match_debug$PROLOGUE$regex$EPILOGUE$post_match_debug};
+    return $nocontext ? qq{(?x)$pre_match_debug$PROLOGUE$regex$EPILOGUE_NC$post_match_debug}
+                      : qq{(?x)$pre_match_debug$PROLOGUE$regex$EPILOGUE$post_match_debug};
 }
 
 1; # Magic true value required at end of module
@@ -2484,7 +2635,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.034
+This document describes Regexp::Grammars version 1.035
 
 
 =head1 SYNOPSIS
@@ -2812,12 +2963,13 @@ implement the new parsing constructs:
 
     use Regexp::Grammars;
 
-    my $parser = qr/ regex with $extra <chocolatey> grammar bits /x;
+    my $parser = qr/ regex with $extra <chocolatey> grammar bits /;
 
-Note that you will need to use the C</x> modifier when declaring a regex
-grammar. Otherwise, the default I<"a whitespace character matches exactly
-that whitespace character"> behaviour of Perl regexes will mess up your
-grammar's parsing.
+Note that you no longer need to use the C</x> modifier when declaring a
+regex grammar, as the module quietly adds a /x to every regex within the
+scope of its usage. Otherwise, the default I<"a whitespace character
+matches exactly that whitespace character"> behaviour of Perl regexes
+would mess up your grammar's parsing.
 
 Once the grammar has been processed, you can then match text against the
 extended regexes, in the usual manner (i.e. via a C<=~> match):
@@ -2884,9 +3036,13 @@ That is, a sequence of whitespace in a token is ignored if the C</x>
 modifier is in effect, or else matches the same literal sequence of
 whitespace characters (if C</x> is not in effect).
 
-In a rule, any sequence of whitespace (except those at the very start and the
-very end of the rule) is treated as matching the implicit subrule C<< <.ws> >>,
-which is automatically predefined to match optional whitespace (i.e. C<\s*>).
+In a rule, most sequences of whitespace are treated as matching the
+implicit subrule C<< <.ws> >>, which is automatically predefined to
+match optional whitespace (i.e. C<\s*>).
+
+Exceptions to this behaviour are whitespaces before a C<|> or a code
+block or an explicit space-matcher (such as C<< <ws> >> or C<\s>), 
+or at the very end of the rule)
 
 You can explicitly define a C<< <ws> >> token to change that default
 behaviour. For example, you could alter the definition of "whitespace" to
