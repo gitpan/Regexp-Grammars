@@ -352,3 +352,11 @@ Revision history for Regexp-Grammars
       last-gasp kind of assistance when confronted with the dreaded
       post-transformation "error marked with <-- HERE" message
 
+
+
+1.036  Mon Sep 15 12:58:47 2014
+
+    * Minor doc improvements
+
+    * Fixed odd behaviour of <debug: off> 
+      (Thanks, Chris!)

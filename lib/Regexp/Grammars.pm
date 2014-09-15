@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.035';
+our $VERSION = '1.036';
 
 my $anon_scalar_ref = \do{my $var};
 my %MAGIC_VARS = (
@@ -2249,7 +2249,7 @@ sub _build_grammar {
     my $runtime_debugging_requested
         = $grammar_spec =~ m{
               ^ [^#]*
-              < debug: \s* (run | match | step | try | on | off | same ) \s* >
+              < debug: \s* (run | match | step | try | on | same ) \s* >
             | \$DEBUG (?! \s* (?: \[ | \{) )
         }xms;
 
@@ -2635,7 +2635,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.035
+This document describes Regexp::Grammars version 1.036
 
 
 =head1 SYNOPSIS
@@ -2965,11 +2965,14 @@ implement the new parsing constructs:
 
     my $parser = qr/ regex with $extra <chocolatey> grammar bits /;
 
-Note that you no longer need to use the C</x> modifier when declaring a
-regex grammar, as the module quietly adds a /x to every regex within the
-scope of its usage. Otherwise, the default I<"a whitespace character
-matches exactly that whitespace character"> behaviour of Perl regexes
-would mess up your grammar's parsing.
+Note that you do not to use the C</x> modifier when declaring a regex
+grammar (though you certainly may). But even if you don't, the module
+quietly adds a C</x> to every regex within the scope of its usage.
+Otherwise, the default I<"a whitespace character matches exactly that
+whitespace character"> behaviour of Perl regexes would mess up your
+grammar's parsing. If you need the non-C</x> behaviour, you can still
+use the C<(?-x)> of C<(?-x:...)> directives to switch of C</x> within
+one or more of your grammar's components.
 
 Once the grammar has been processed, you can then match text against the
 extended regexes, in the usual manner (i.e. via a C<=~> match):
@@ -6400,13 +6403,24 @@ you need:
     }xms;
 
 
-=item C<< Multiple definitions for <%s> >>
+=item C<< Inheritance from unknown grammar requested by <%s> >>
+
+You used an C<< <extends:...> >> directive to request that your
+grammar inherit from another, but the grammar you asked to
+inherit from doesn't exist.
+
+Check the spelling of the grammar name, and that it's already been
+defined somewhere earlier in your program.
+
+
+=item C<< Redeclaration of <%s> will be ignored >>
 
 You defined two or more rules or tokens with the same name.
-The first one defined will be used, the rest will be ignored.
+The first one defined in the grammar will be used;
+the rest will be ignored.
 
 To get rid of the warning, get rid of the extra definitions
-(or, at least, comment them out).
+(or, at least, comment them out or rename the rules).
 
 
 =item C<< Possible invalid subrule call %s >>
@@ -6428,11 +6442,11 @@ it and quoting the leading angle:
     \<[identifier
 
 
-=item C<< Possible invalid directive: %s >>
+=item C<< Possible failed attempt to specify a directive: %s >>
 
 Your grammar contained something of the form:
 
-    <identifier:
+    <identifier:...
 
 but which wasn't a known directive like C<< <rule:...> >>
 or C<< <debug:...> >>. If it was supposed to be a Regexp::Grammars
@@ -6441,6 +6455,20 @@ supposed to be a directive, you can silence the warning by rewriting it
 and quoting the leading angle:
 
     \<identifier:
+
+=item C<< Possible failed attempt to specify a subrule call %s >>
+
+Your grammar contained something of the form:
+
+    <identifier...
+
+but which wasn't a call to a known subrule like C<< <ident> >> or C<<
+<name> >>. If it was supposed to be a Regexp::Grammars subrule call,
+check the spelling of the rule name in the angles. If it wasn't supposed
+to be a subrule call, you can silence the warning by rewriting it and
+quoting the leading angle:
+
+    \<identifier...
 
 
 =item C<< Repeated subrule %s will only capture its final match >>
@@ -6486,12 +6514,12 @@ Did you misspell the filename, or get the permissions wrong
 somewhere in the filepath?
 
 
-=item C<< Non-backtracking subrule %s not fully supported yet >>
+=item C<< Non-backtracking subrule %s may not revert correctly during backtracking >>
 
-Because of inherent limitations in the Perl 5.10 regex engine,
+Because of inherent limitations in the Perl regex engine,
 non-backtracking constructs like C<++>, C<*+>, C<?+>,
 and C<< (?>...) >> do not always work correctly when applied to
-subrule calls.
+subrule calls, especially in earlier versions of Perl.
 
 If the grammar doesn't work properly, replace the offending constructs
 with regular backtracking versions instead. If the grammar does work,
@@ -6502,7 +6530,7 @@ kind of parentheses. For example, change:
 
 to:
 
-    ( <[ListElem]> )++
+    (?: <[ListElem]> )++
 
 
 =item C<< Unexpected item before first subrule specification in definition of <grammar: %s> >>
@@ -6514,6 +6542,32 @@ completely ignored within the grammar.
 
 To silence the warning, either comment out or delete whatever is before
 the first rule/token definition.
+
+
+=item C<< No main regex specified before rule definitions >>
+
+You specified an unnamed grammar (i.e. no C<< <grammar:...> >> directive),
+but didn't specify anything for it to actually match, just some rules
+that you don't actually call. For example:
+
+    my $grammar = qr{
+
+        <rule: list>    \( <item> +% [,] \)
+
+        <token: item>   <list> | \d+
+    }x;
+
+You have to provide something before the first rule to start the matching
+off. For example:
+
+    my $grammar = qr{
+
+        <list>   # <--- This tells the grammar how to start matching
+
+        <rule: list>    \( <item> +% [,] \)
+
+        <token: item>   <list> | \d+
+    }x;
 
 
 =item C<< Ignoring useless empty <ws:> directive >>
@@ -6536,6 +6590,28 @@ putting a C<< <ws:...> >> directive in a token is a waste of time.
 
 Either remove the useless directive, or else change the surrounding
 token definition to a rule definition.
+
+=item C<< Quantifier that doesn't quantify anything: <%s> >>
+
+You specified a rule or token something like:
+
+    <token: star>  *
+
+or:
+
+    <rule: add_op>  plus | add | +
+
+but the C<*> and C<+> in those examples are both regex meta-operators:
+quantifiers that usually cause what precedes them to match repeatedly.
+In these cases however, nothing is preceding the quantifier, so it's a
+Perl syntax error.
+
+You almost certainly need to escape the meta-characters in some way.
+For example:
+
+    <token: star>  \*
+
+    <rule: add_op>  plus | add | [+]
 
 =back
 
