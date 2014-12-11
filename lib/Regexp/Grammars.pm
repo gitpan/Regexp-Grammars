@@ -11,7 +11,7 @@ use 5.010;
 use Scalar::Util qw< blessed reftype >;
 use Data::Dumper qw< Dumper  >;
 
-our $VERSION = '1.036';
+our $VERSION = '1.038';
 
 my $anon_scalar_ref = \do{my $var};
 my %MAGIC_VARS = (
@@ -839,7 +839,7 @@ my $EPILOGUE = q{)(?{; $Regexp::Grammars::RESULT_STACK[-1]{q{}} //= $^N;;
          }
          Regexp::Grammars::clear_rule_handler();
          */ = $Regexp::Grammars::match_frame;
-    })(?(DEFINE)
+    })|(?{Regexp::Grammars::clear_rule_handler();})(?!)(?(DEFINE)
         (?<ws>(?:\\s*))
         (?<hk>(?:\\S+))
         (?<matchpos> (?{; $Regexp::Grammars::RESULT_STACK[-1]{"="} = pos; }) )
@@ -2635,7 +2635,7 @@ Regexp::Grammars - Add grammatical parsing features to Perl 5.10 regexes
 
 =head1 VERSION
 
-This document describes Regexp::Grammars version 1.036
+This document describes Regexp::Grammars version 1.038
 
 
 =head1 SYNOPSIS

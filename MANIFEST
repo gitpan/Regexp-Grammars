@@ -96,4 +96,6 @@ t/error_non_hash_based.t
 t/minimize_bug.t
 t/missing_slash_x.t
 t/one_liner.t
-META.yml                                 Module meta-data (added by MakeMaker)
+t/clear_actions.t
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)

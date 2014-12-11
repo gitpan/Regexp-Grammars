@@ -360,3 +360,12 @@ Revision history for Regexp-Grammars
 
     * Fixed odd behaviour of <debug: off> 
       (Thanks, Chris!)
+
+
+
+1.038  Thu Dec 11 14:52:05 2014
+
+    * Fixed bug where actions persisted after a failed ->with_actions() match
+      (Thanks Hao Wu!)
+
+
